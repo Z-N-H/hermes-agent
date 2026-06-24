@@ -9,21 +9,21 @@ from typing import Any, Dict, List
 def markdown_to_slack_blocks(content: str) -> List[Dict[str, Any]]:
     """Convert markdown content into a list of Slack Block Kit blocks.
 
-    Produces ``header``, ``section``, ``divider``, and ``context`` blocks
-    for clean, readable Slack rendering.  Falls back to a single ``section``
-    when the input is plain text.
+    Uses ``rich_text`` blocks for code (with native syntax highlighting via
+    the ``language`` field) and ``section`` / ``header`` / ``divider`` for
+    everything else.
 
     Rules
     -----
     * ``# Title`` → ``header`` block (plain_text, max 150 chars)
     * ``## Subtitle`` → ``section`` with bold text
     * ``---`` / ``***`` / ``___`` → ``divider`` block
-    * ``\`\`\`lang\ncode\n\`\`\``` → ``section`` with mrkdwn code block
+    * ``\`\`\`lang\ncode\n\`\`\``` → ``rich_text`` block with
+      ``rich_text_preformatted`` and ``language`` field
     * ``| table | rows |`` → ``section`` with mrkdwn code block
     * Bullet / numbered lists → ``section`` with mrkdwn
     * ``> quote`` → ``section`` with mrkdwn blockquote
     * Normal paragraphs → ``section`` with mrkdwn
-    * Trailing metadata (e.g. ``— 3 min ago``) → ``context`` block
     """
     if not content:
         return []
@@ -33,7 +33,6 @@ def markdown_to_slack_blocks(content: str) -> List[Dict[str, Any]]:
     i = 0
     n = len(lines)
 
-    # Buffer for accumulating plain text lines into a single section
     text_buffer: List[str] = []
 
     def _flush_text_buffer() -> None:
@@ -44,8 +43,6 @@ def markdown_to_slack_blocks(content: str) -> List[Dict[str, Any]]:
         text_buffer = []
         if not text:
             return
-        # Escape backticks that would break mrkdwn inside a section
-        # (fenced code blocks are handled separately)
         text = text.replace("```", "\u200b`\u200b`\u200b`\u200b")
         blocks.append({
             "type": "section",
@@ -63,7 +60,6 @@ def markdown_to_slack_blocks(content: str) -> List[Dict[str, Any]]:
             header_text = re.sub(r"^#{1,6}\s+", "", stripped).strip()
             if header_text:
                 if level == 1:
-                    # Header block — plain_text only, 150 char max
                     blocks.append({
                         "type": "header",
                         "text": {
@@ -73,7 +69,6 @@ def markdown_to_slack_blocks(content: str) -> List[Dict[str, Any]]:
                         },
                     })
                 else:
-                    # Sub-header as bold section
                     blocks.append({
                         "type": "section",
                         "text": {
@@ -91,10 +86,11 @@ def markdown_to_slack_blocks(content: str) -> List[Dict[str, Any]]:
             i += 1
             continue
 
-        # Fenced code block
+        # Fenced code block → rich_text with syntax highlighting
         if stripped.startswith("```"):
             _flush_text_buffer()
-            lang = stripped[3:].strip()
+            lang_match = re.match(r"^```(\w+)", stripped)
+            language = lang_match.group(1) if lang_match else ""
             i += 1
             code_lines: List[str] = []
             while i < n and not lines[i].strip().startswith("```"):
@@ -103,13 +99,17 @@ def markdown_to_slack_blocks(content: str) -> List[Dict[str, Any]]:
             i += 1  # skip closing ```
             code = "\n".join(code_lines)
             if code:
-                prefix = f"```{lang}\n" if lang else "```\n"
+                preformatted: Dict[str, Any] = {
+                    "type": "rich_text_preformatted",
+                    "elements": [
+                        {"type": "text", "text": code},
+                    ],
+                }
+                if language:
+                    preformatted["language"] = language
                 blocks.append({
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"{prefix}{code[:2970]}\n```",
-                    },
+                    "type": "rich_text",
+                    "elements": [preformatted],
                 })
             continue
 
@@ -131,20 +131,13 @@ def markdown_to_slack_blocks(content: str) -> List[Dict[str, Any]]:
                 })
             continue
 
-        # Horizontal rule inside text (rare but possible)
-        if re.match(r"^\s*---\s*$", stripped):
-            _flush_text_buffer()
-            blocks.append({"type": "divider"})
-            i += 1
-            continue
-
         # Normal line — buffer it
         text_buffer.append(line)
         i += 1
 
     _flush_text_buffer()
 
-    # Remove leading/trailing dividers for cleanliness
+    # Remove leading/trailing dividers
     while blocks and blocks[0].get("type") == "divider":
         blocks.pop(0)
     while blocks and blocks[-1].get("type") == "divider":
@@ -152,7 +145,6 @@ def markdown_to_slack_blocks(content: str) -> List[Dict[str, Any]]:
 
     # Slack Block Kit limit: 50 blocks per message
     if len(blocks) > 50:
-        # Keep first 49 blocks and add a context note
         blocks = blocks[:49]
         blocks.append({
             "type": "context",
