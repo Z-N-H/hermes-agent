@@ -238,7 +238,12 @@ def run_whatsapp_cloud_setup() -> int:
     from hermes_cli.config import get_env_value, save_env_value
 
     print()
-    print("⚕ WhatsApp Business Cloud API Setup")
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
+    print(f"{_icon} WhatsApp Business Cloud API Setup")
     print("=" * 50)
     print()
     print("This wizard configures Hermes to talk to WhatsApp via Meta's")

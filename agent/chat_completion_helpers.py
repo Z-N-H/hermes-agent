@@ -1923,6 +1923,7 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
                     try:
                         agent.stream_delta_callback(delta.content)
                         agent._record_streamed_assistant_text(delta.content)
+                        agent._record_tps_token(delta.content)
                     except Exception:
                         pass
 
@@ -1970,6 +1971,7 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
                             entry["function"]["name"] = tc_delta.function.name
                         if tc_delta.function.arguments:
                             entry["function"]["arguments"] += tc_delta.function.arguments
+                            agent._record_tps_token(tc_delta.function.arguments)
                     extra = getattr(tc_delta, "extra_content", None)
                     if extra is None and hasattr(tc_delta, "model_extra"):
                         extra = (tc_delta.model_extra or {}).get("extra_content")

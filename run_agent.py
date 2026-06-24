@@ -642,6 +642,12 @@ class AIAgent:
         # Turn counter (added after reset_session_state was first written — #2635)
         self._user_turn_count = 0
 
+        # TPS (tokens per second) tracking
+        self._tps_token_count = 0
+        self._tps_window_start = time.time()
+        self._current_tps = 0.0
+        self._last_tps_update = 0.0
+
         # Context engine reset/transition (works for built-in compressor and plugins)
         self._transition_context_engine_session(
             old_session_id=old_session_id,
@@ -4144,8 +4150,29 @@ class AIAgent:
         except Exception:
             logger.debug("interim_assistant_callback error", exc_info=True)
 
+    def _record_tps_token(self, text: str) -> None:
+        """Track tokens-per-second using a rolling window."""
+        if not text:
+            return
+        now = time.time()
+        # Approximate token count: ~4 chars per token (works well for English/CJK mix)
+        token_estimate = max(1, len(text) // 4)
+        self._tps_token_count += token_estimate
+        elapsed = now - self._tps_window_start
+        # Update TPS immediately so the status bar shows something even for
+        # fast responses.  The 1-second gate below is just for resetting the
+        # window to keep the rolling average fresh.
+        if elapsed > 0:
+            self._current_tps = self._tps_token_count / elapsed
+            self._last_tps_update = now
+        if elapsed >= 1.0:
+            self._tps_token_count = 0
+            self._tps_window_start = now
+
     def _fire_stream_delta(self, text: str) -> None:
         """Fire all registered stream delta callbacks (display + TTS)."""
+        # Track TPS for status bar display
+        self._record_tps_token(text)
         # If a tool iteration set the break flag, prepend a single paragraph
         # break before the first real text delta.  This prevents the original
         # problem (text concatenation across tool boundaries) without stacking
@@ -4199,6 +4226,7 @@ class AIAgent:
 
     def _fire_reasoning_delta(self, text: str) -> None:
         """Fire reasoning callback if registered."""
+        self._record_tps_token(text)
         cb = self.reasoning_callback
         if cb is not None:
             try:

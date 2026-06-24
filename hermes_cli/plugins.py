@@ -145,6 +145,11 @@ VALID_HOOKS: Set[str] = {
     "on_session_reset",
     "subagent_start",
     "subagent_stop",
+    # Status bar fragment hook. Fires every render tick when the TUI status bar
+    # is visible. Plugins return a list of (style, text) tuples to inject into
+    # the status bar, or None/empty list for no contribution.
+    # Kwargs: cli: HermesCLI instance, agent: AIAgent or None
+    "status_bar_fragment",
     # Gateway pre-dispatch hook. Fired once per incoming MessageEvent
     # after the internal-event guard but BEFORE auth/pairing and agent
     # dispatch. Plugins may return a dict to influence flow:

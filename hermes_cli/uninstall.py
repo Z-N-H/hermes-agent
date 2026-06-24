@@ -511,8 +511,13 @@ def run_gui_uninstall(args):
     skip_confirm = bool(getattr(args, "yes", False))
 
     print()
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
     print(color("┌─────────────────────────────────────────────────────────┐", Colors.MAGENTA, Colors.BOLD))
-    print(color("│         ⚕ Hermes Chat GUI Uninstaller                  │", Colors.MAGENTA, Colors.BOLD))
+    print(color(f"│         {_icon} Hermes Chat GUI Uninstaller                  │", Colors.MAGENTA, Colors.BOLD))
     print(color("└─────────────────────────────────────────────────────────┘", Colors.MAGENTA, Colors.BOLD))
     print()
 
@@ -600,8 +605,13 @@ def run_uninstall(args):
         return
 
     print()
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
     print(color("┌─────────────────────────────────────────────────────────┐", Colors.MAGENTA, Colors.BOLD))
-    print(color("│            ⚕ Hermes Agent Uninstaller                  │", Colors.MAGENTA, Colors.BOLD))
+    print(color(f"│            {_icon} Hermes Agent Uninstaller                  │", Colors.MAGENTA, Colors.BOLD))
     print(color("└─────────────────────────────────────────────────────────┘", Colors.MAGENTA, Colors.BOLD))
     print()
     
@@ -879,7 +889,12 @@ def _perform_uninstall(
         print(color("Reload your shell to complete the process:", Colors.YELLOW))
         print("  source ~/.bashrc  # or ~/.zshrc")
     print()
-    print("Thank you for using Hermes Agent! ⚕")
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
+    print(f"Thank you for using Hermes Agent! {_icon}")
     print()
 
 

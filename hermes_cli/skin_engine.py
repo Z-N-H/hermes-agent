@@ -33,6 +33,7 @@ All fields are optional. Missing values inherit from the ``default`` skin.
       status_bar_bg: "#1a1a2e"           # Status bar background
       status_bar_text: "#C0C0C0"         # Status bar default text
       status_bar_strong: "#FFD700"       # Status bar highlighted text
+      status_bar_model: "#FF69B4"        # Status bar model name
       status_bar_dim: "#8B8682"          # Status bar separators/muted text
       status_bar_good: "#8FBC8F"         # Healthy context usage
       status_bar_warn: "#FFD700"         # Warning context usage
@@ -216,6 +217,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "status_bar_bg": "#2A1212",
             "status_bar_text": "#F1E6CF",
             "status_bar_strong": "#C7A96B",
+            "status_bar_model": "#FF85A2",
             "status_bar_dim": "#6E584B",
             "status_bar_good": "#7BC96F",
             "status_bar_warn": "#C7A96B",
@@ -288,6 +290,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "status_bar_bg": "#1F1F1F",
             "status_bar_text": "#C9D1D9",
             "status_bar_strong": "#E6EDF3",
+            "status_bar_model": "#FF69B4",
             "status_bar_dim": "#777777",
             "status_bar_good": "#B5B5B5",
             "status_bar_warn": "#AAAAAA",
@@ -327,6 +330,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "status_bar_bg": "#151C2F",
             "status_bar_text": "#C9D1D9",
             "status_bar_strong": "#7EB8F6",
+            "status_bar_model": "#FF69B4",
             "status_bar_dim": "#4B5563",
             "status_bar_good": "#63D0A6",
             "status_bar_warn": "#E6A855",
@@ -440,6 +444,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "status_bar_bg": "#0F2440",
             "status_bar_text": "#EAF7FF",
             "status_bar_strong": "#A9DFFF",
+            "status_bar_model": "#FF69B4",
             "status_bar_dim": "#496884",
             "status_bar_good": "#6ED7B0",
             "status_bar_warn": "#5DB8F5",
@@ -512,6 +517,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "status_bar_bg": "#202020",
             "status_bar_text": "#D3D3D3",
             "status_bar_strong": "#F5F5F5",
+            "status_bar_model": "#FF69B4",
             "status_bar_dim": "#656565",
             "status_bar_good": "#B7B7B7",
             "status_bar_warn": "#D3D3D3",
@@ -585,6 +591,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "status_bar_bg": "#2B160E",
             "status_bar_text": "#FFF0D4",
             "status_bar_strong": "#FFD39A",
+            "status_bar_model": "#FF85A2",
             "status_bar_dim": "#6C4724",
             "status_bar_good": "#6BCB77",
             "status_bar_warn": "#F29C38",
@@ -843,6 +850,19 @@ def get_active_goodbye(fallback: str = "Goodbye! ⚕") -> str:
 
 
 
+def get_active_brand_icon(fallback: str = "⚕") -> str:
+    """Get the brand icon glyph from the active skin's response label."""
+    try:
+        raw = get_active_skin().get_branding("response_label", fallback)
+    except Exception:
+        raw = fallback
+
+    cleaned = (raw or fallback).strip()
+
+    return cleaned.split(" ", 1)[0] or fallback.strip()
+
+
+
 def get_prompt_toolkit_style_overrides() -> Dict[str, str]:
     """Return prompt_toolkit style overrides derived from the active skin.
 
@@ -869,6 +889,7 @@ def get_prompt_toolkit_style_overrides() -> Dict[str, str]:
     status_bg = skin.get_color("status_bar_bg", "#1a1a2e")
     status_text = skin.get_color("status_bar_text", text)
     status_strong = skin.get_color("status_bar_strong", title)
+    status_model = skin.get_color("status_bar_model", "#FF69B4")
     status_dim = skin.get_color("status_bar_dim", dim)
     status_good = skin.get_color("status_bar_good", skin.get_color("ui_ok", "#8FBC8F"))
     status_warn = skin.get_color("status_bar_warn", warn)
@@ -892,6 +913,7 @@ def get_prompt_toolkit_style_overrides() -> Dict[str, str]:
         "hint": f"{dim} italic",
         "status-bar": f"bg:{status_bg} {status_text}",
         "status-bar-strong": f"bg:{status_bg} {status_strong} bold",
+        "status-bar-model": f"bg:{status_bg} {status_model} bold",
         "status-bar-dim": f"bg:{status_bg} {status_dim}",
         "status-bar-good": f"bg:{status_bg} {status_good} bold",
         "status-bar-warn": f"bg:{status_bg} {status_warn} bold",

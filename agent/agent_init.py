@@ -1586,6 +1586,12 @@ def init_agent(
     )
     agent._user_turn_count = 0
 
+    # TPS (tokens per second) tracking — mirrors reset_session_state() initialisation
+    agent._tps_token_count = 0
+    agent._tps_window_start = time.time()
+    agent._current_tps = 0.0
+    agent._last_tps_update = 0.0
+
     # Cumulative token usage for the session
     agent.session_prompt_tokens = 0
     agent.session_completion_tokens = 0

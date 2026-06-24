@@ -10714,7 +10714,7 @@ def mount_spa(application: FastAPI):
             WEB_DIST.resolve()
         ):
             return JSONResponse({"error": "not found"}, status_code=404)
-        prefix = _normalise_prefix(request.headers.get("x-forwarded-prefix"))
+        prefix = _normalise_prefix(request.headers.get("x-forwarded-prefix") or os.environ.get("HERMES_DASHBOARD_PREFIX", ""))
         css = css_path.read_text(encoding="utf-8")
         if prefix:
             for asset_dir in ("/fonts/", "/fonts-terminal/", "/ds-assets/", "/assets/"):
@@ -10727,7 +10727,7 @@ def mount_spa(application: FastAPI):
 
     @application.get("/{full_path:path}")
     async def serve_spa(full_path: str, request: Request):
-        prefix = _normalise_prefix(request.headers.get("x-forwarded-prefix"))
+        prefix = _normalise_prefix(request.headers.get("x-forwarded-prefix") or os.environ.get("HERMES_DASHBOARD_PREFIX", ""))
         # An unmatched /api/* path is a missing/renamed endpoint, NOT a
         # client-side route. Falling through to index.html here returns
         # `<!doctype html>` with status 200, which makes JSON clients (the

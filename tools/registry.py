@@ -23,6 +23,8 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
+from hermes_icons import ICON_BOLT
+
 logger = logging.getLogger(__name__)
 
 
@@ -447,7 +449,7 @@ class ToolRegistry:
         entry = self.get_entry(name)
         return entry.toolset if entry else None
 
-    def get_emoji(self, name: str, default: str = "⚡") -> str:
+    def get_emoji(self, name: str, default: str = ICON_BOLT) -> str:
         """Return the emoji for a tool, or *default* if unset."""
         entry = self.get_entry(name)
         return (entry.emoji if entry and entry.emoji else default)
