@@ -38,6 +38,7 @@ sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.helpers import MessageDeduplicator
+from gateway.platforms.slack_blocks import markdown_to_slack_blocks, blocks_to_payload
 from gateway.platforms.base import (
     BasePlatformAdapter,
     MessageEvent,
@@ -1127,6 +1128,121 @@ class SlackAdapter(BasePlatformAdapter):
             return self._team_clients[team_id]
         return self._app.client  # fallback to primary
 
+    # ── Block Kit helpers ──────────────────────────────────────────────
+
+    def _should_use_block_kit(self, content: str) -> bool:
+        """Return True when the content benefits from Block Kit layout.
+
+        Criteria:
+        - Has markdown headers (# Title)
+        - Has fenced code blocks (```)
+        - Has pipe-delimited table rows
+        - Has explicit dividers (---)
+        - Is longer than 1,200 chars and contains structural elements
+        """
+        if not content or len(content) < 80:
+            return False
+        # Quick structural markers
+        has_header = bool(re.search(r"^#{1,6}\s+", content, re.MULTILINE))
+        has_code = "```" in content
+        has_table = bool(re.search(r"^\s*\|[^|]+\|", content, re.MULTILINE))
+        has_divider = bool(re.search(r"^\s*([-=*_]){3,}\s*$", content, re.MULTILINE))
+        structural = has_header or has_code or has_table or has_divider
+        if structural:
+            return True
+        # Long text with sub-headings (bold lines that look like headers)
+        if len(content) > 1200:
+            has_bold_header = bool(re.search(r"^\*\*.+\*\*$", content, re.MULTILINE))
+            if has_bold_header:
+                return True
+        return False
+
+    async def _send_blocks(
+        self,
+        chat_id: str,
+        content: str,
+        thread_ts: Optional[str],
+        metadata: Optional[Dict[str, Any]],
+    ) -> SendResult:
+        """Send content via Block Kit ``blocks`` array.
+
+        Falls back to plain text if Block Kit parsing fails.
+        """
+        try:
+            blocks = markdown_to_slack_blocks(content)
+            if not blocks:
+                # Fallback to plain text for empty/unsupported input
+                formatted = self.format_message(content)
+                kwargs = {
+                    "channel": chat_id,
+                    "text": formatted,
+                    "mrkdwn": True,
+                }
+                if thread_ts:
+                    kwargs["thread_ts"] = thread_ts
+                result = await self._get_client(chat_id).chat_postMessage(**kwargs)
+                return SendResult(
+                    success=True,
+                    message_id=result.get("ts"),
+                    raw_response=result,
+                )
+
+            payload = blocks_to_payload(blocks, text_fallback=content[:4000])
+            kwargs = {
+                "channel": chat_id,
+                "text": payload["text"],
+                "blocks": payload["blocks"],
+            }
+            if thread_ts:
+                kwargs["thread_ts"] = thread_ts
+                # Only broadcast the first message
+                broadcast = self.config.extra.get("reply_broadcast", False)
+                if broadcast:
+                    kwargs["reply_broadcast"] = True
+
+            result = await self._get_client(chat_id).chat_postMessage(**kwargs)
+
+            if thread_ts:
+                await self.stop_typing(chat_id)
+
+            sent_ts = result.get("ts")
+            if sent_ts:
+                self._bot_message_ts.add(sent_ts)
+                if thread_ts:
+                    self._bot_message_ts.add(thread_ts)
+                if len(self._bot_message_ts) > self._BOT_TS_MAX:
+                    excess = len(self._bot_message_ts) - self._BOT_TS_MAX // 2
+                    for old_ts in list(self._bot_message_ts)[:excess]:
+                        self._bot_message_ts.discard(old_ts)
+
+            return SendResult(
+                success=True,
+                message_id=sent_ts,
+                raw_response=result,
+            )
+        except Exception as e:
+            logger.error("[Slack] Block Kit send error: %s", e, exc_info=True)
+            # Fallback to plain text — do NOT call self.send() to avoid
+            # recursion back into Block Kit.
+            try:
+                formatted = self.format_message(content)
+                kwargs = {
+                    "channel": chat_id,
+                    "text": formatted,
+                    "mrkdwn": True,
+                }
+                if thread_ts:
+                    kwargs["thread_ts"] = thread_ts
+                result = await self._get_client(chat_id).chat_postMessage(**kwargs)
+                return SendResult(
+                    success=True,
+                    message_id=result.get("ts"),
+                    raw_response=result,
+                )
+            except Exception as e2:
+                logger.error("[Slack] Plain-text fallback also failed: %s", e2, exc_info=True)
+                return SendResult(success=False, error=str(e2))
+
     async def send(
         self,
         chat_id: str,
@@ -1134,34 +1250,38 @@ class SlackAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        """Send a message to a Slack channel or DM."""
+        """Send a message to a Slack channel or DM.
+
+        Uses Block Kit rich layout when the content contains structural
+        elements (headers, code blocks, tables) and falls back to plain
+        mrkdwn text for simple messages.
+        """
         if not self._app:
             return SendResult(success=False, error="Not connected")
 
         try:
-            # Check for a pending slash-command context.  When the user ran a
-            # native slash command (e.g. /q, /stop, /model), the initial ack
-            # already showed an ephemeral "Running /cmd…" message.  If we have
-            # a stashed response_url for this channel, replace that ack with
-            # the actual command reply ephemerally instead of posting publicly.
+            # Check for a pending slash-command context.
             slash_ctx = self._pop_slash_context(chat_id)
             if slash_ctx:
-                return await self._send_slash_ephemeral(
-                    slash_ctx,
-                    content,
-                )
-
-            # Convert standard markdown → Slack mrkdwn
-            formatted = self.format_message(content)
-
-            # Split long messages, preserving code block boundaries
-            chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
+                return await self._send_slash_ephemeral(slash_ctx, content)
 
             thread_ts = self._resolve_thread_ts(reply_to, metadata)
-            last_result = None
 
-            # reply_broadcast: also post thread replies to the main channel.
-            # Controlled via platform config: gateway.slack.reply_broadcast
+            # Decide whether to use Block Kit or plain text.
+            # Block Kit is used when the content has structural elements
+            # (headers, code blocks, tables, dividers) or is long enough
+            # that plain text rendering is poor.
+            use_blocks = self._should_use_block_kit(content)
+
+            if use_blocks:
+                return await self._send_blocks(
+                    chat_id, content, thread_ts, metadata
+                )
+
+            # Legacy plain-text path
+            formatted = self.format_message(content)
+            chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
+            last_result = None
             broadcast = self.config.extra.get("reply_broadcast", False)
 
             for i, chunk in enumerate(chunks):
@@ -1172,22 +1292,16 @@ class SlackAdapter(BasePlatformAdapter):
                 }
                 if thread_ts:
                     kwargs["thread_ts"] = thread_ts
-                    # Only broadcast the first chunk of the first reply
                     if broadcast and i == 0:
                         kwargs["reply_broadcast"] = True
-
                 last_result = await self._get_client(chat_id).chat_postMessage(**kwargs)
 
-            # Clear Slack Assistant status as soon as the final message is posted.
             if thread_ts:
                 await self.stop_typing(chat_id)
 
-            # Track the sent message ts so we can auto-respond to thread
-            # replies without requiring @mention.
             sent_ts = last_result.get("ts") if last_result else None
             if sent_ts:
                 self._bot_message_ts.add(sent_ts)
-                # Also register the thread root so replies-to-my-replies work
                 if thread_ts:
                     self._bot_message_ts.add(thread_ts)
                 if len(self._bot_message_ts) > self._BOT_TS_MAX:
@@ -1201,7 +1315,7 @@ class SlackAdapter(BasePlatformAdapter):
                 raw_response=last_result,
             )
 
-        except Exception as e:  # pragma: no cover - defensive logging
+        except Exception as e:
             logger.error("[Slack] Send error: %s", e, exc_info=True)
             return SendResult(success=False, error=str(e))
 
