@@ -146,6 +146,105 @@ class TestPhoenixPlugin:
             mock_span.set_attribute.assert_any_call("tool.duration_ms", 1500)
             mock_span.end.assert_called_once()
 
+    def test_llm_span_captures_input_and_output(self):
+        """LLM spans should capture input.value (prompt) and output.value (response)."""
+        from plugins.observability.phoenix import on_pre_api_request, on_post_api_request
+
+        with patch("plugins.observability.phoenix._get_or_create_tracer") as mock_get_tracer:
+            mock_span = MagicMock()
+            mock_tracer = MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+            mock_get_tracer.return_value = mock_tracer
+
+            # Pre-hook: should set input.value with the prompt
+            on_pre_api_request(
+                api_request_id="req-input-test",
+                model="gpt-4",
+                provider="openai",
+                request_messages=[
+                    {"role": "system", "content": "You are a helper."},
+                    {"role": "user", "content": "What is 2+2?"},
+                ],
+                started_at=0,
+            )
+
+            # Verify input.value was set on the span
+            input_calls = [c for c in mock_span.set_attribute.call_args_list if c[0][0] == "input.value"]
+            assert len(input_calls) == 1, "input.value should be set on LLM span"
+            input_text = input_calls[0][0][1]
+            assert "[system] You are a helper." in input_text
+            assert "[user] What is 2+2?" in input_text
+
+            # Verify input.mime_type
+            mime_calls = [c for c in mock_span.set_attribute.call_args_list if c[0][0] == "input.mime_type"]
+            assert len(mime_calls) == 1
+            assert mime_calls[0][0][1] == "text/plain"
+
+            # Post-hook: should set output.value with the response
+            mock_span.reset_mock()
+            with patch("plugins.observability.phoenix._SPAN_STATE", {
+                "req-input-test": {"span": mock_span, "started_at": 0, "model": "gpt-4", "provider": "openai"}
+            }):
+                on_post_api_request(
+                    api_request_id="req-input-test",
+                    assistant_message={"role": "assistant", "content": "2+2 equals 4."},
+                    usage={"input_tokens": 15, "output_tokens": 8},
+                )
+
+            output_calls = [c for c in mock_span.set_attribute.call_args_list if c[0][0] == "output.value"]
+            assert len(output_calls) == 1, "output.value should be set on LLM span"
+            assert output_calls[0][0][1] == "2+2 equals 4."
+
+            output_mime_calls = [c for c in mock_span.set_attribute.call_args_list if c[0][0] == "output.mime_type"]
+            assert len(output_mime_calls) == 1
+            assert output_mime_calls[0][0][1] == "text/plain"
+
+    def test_tool_span_captures_input_and_output(self):
+        """Tool spans should capture input.value (args) and output.value (result)."""
+        from plugins.observability.phoenix import on_pre_tool_call, on_post_tool_call
+
+        with patch("plugins.observability.phoenix._get_or_create_tracer") as mock_get_tracer:
+            mock_span = MagicMock()
+            mock_tracer = MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+            mock_get_tracer.return_value = mock_tracer
+
+            with patch("plugins.observability.phoenix.get_current_traceparent", return_value=None):
+                # Pre-hook: should include input.value in start_span attributes
+                on_pre_tool_call(
+                    tool_name="terminal",
+                    tool_call_id="tc-input-test",
+                    args={"command": "echo hello", "workdir": "/tmp"},
+                )
+
+            # Verify start_span was called with input.value in attributes
+            call_kwargs = mock_tracer.start_span.call_args[1]
+            attrs = call_kwargs.get("attributes", {})
+            assert "input.value" in attrs, "input.value should be in tool span attributes"
+            assert "echo hello" in str(attrs["input.value"])
+            assert attrs.get("input.mime_type") == "application/json"
+
+            # Post-hook: should set output.value with the result
+            mock_span.reset_mock()
+            with patch("plugins.observability.phoenix._SPAN_STATE", {
+                "tc-input-test": {"span": mock_span, "started_at": 0, "tool_name": "terminal"}
+            }):
+                on_post_tool_call(
+                    tool_name="terminal",
+                    tool_call_id="tc-input-test",
+                    result="hello\n",
+                    duration_ms=100,
+                    status="success",
+                )
+
+            output_calls = [c for c in mock_span.set_attribute.call_args_list if c[0][0] == "output.value"]
+            assert len(output_calls) == 1, "output.value should be set on tool span"
+            assert output_calls[0][0][1] == "hello\n"
+
+            output_mime_calls = [c for c in mock_span.set_attribute.call_args_list if c[0][0] == "output.mime_type"]
+            assert len(output_mime_calls) == 1
+            assert output_mime_calls[0][0][1] == "text/plain"
+
     def test_subprocess_patch_injects_traceparent(self):
         """The subprocess monkey-patch should inject TRACEPARENT into child env."""
         import subprocess

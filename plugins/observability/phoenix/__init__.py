@@ -325,6 +325,42 @@ def on_pre_api_request(
         logger.debug("phoenix plugin: failed to start llm.invoke span: %s", exc)
         return
 
+    # Capture the actual prompt as input.value for Phoenix UI
+    try:
+        input_text = ""
+        if isinstance(request_messages, list):
+            # Format: [{"role": "user", "content": "..."}, ...]
+            parts = []
+            for msg in request_messages:
+                if isinstance(msg, dict):
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    parts.append(f"[{role}] {content}")
+                else:
+                    parts.append(str(msg))
+            input_text = "\n".join(parts)
+        elif isinstance(request_messages, str):
+            input_text = request_messages
+        elif user_message is not None:
+            input_text = str(user_message)
+        elif isinstance(request, dict) and "body" in request:
+            body = request["body"]
+            if isinstance(body, dict) and "messages" in body:
+                msgs = body["messages"]
+                if isinstance(msgs, list):
+                    parts = []
+                    for m in msgs:
+                        if isinstance(m, dict):
+                            parts.append(f"[{m.get('role','?')}] {m.get('content','')}")
+                        else:
+                            parts.append(str(m))
+                    input_text = "\n".join(parts)
+        if input_text:
+            span.set_attribute("input.value", _safe_serialize(input_text, max_len=8000))
+            span.set_attribute("input.mime_type", "text/plain")
+    except Exception:
+        pass
+
     with _STATE_LOCK:
         _SPAN_STATE[key] = {
             "span": span,
@@ -409,6 +445,37 @@ def on_post_api_request(
         if assistant_tool_call_count:
             span.set_attribute("gen_ai.response.tool_call_count", assistant_tool_call_count)
 
+        # Capture the actual assistant response as output.value for Phoenix UI
+        try:
+            output_text = ""
+            if assistant_message is not None:
+                if isinstance(assistant_message, dict):
+                    output_text = assistant_message.get("content", "")
+                    if not output_text and "tool_calls" in assistant_message:
+                        tc = assistant_message["tool_calls"]
+                        if isinstance(tc, list):
+                            output_text = f"[tool_calls] {tc}"
+                else:
+                    output_text = str(assistant_message)
+            elif isinstance(response, dict):
+                # Try to extract content from common response shapes
+                choices = response.get("choices", [])
+                if choices and isinstance(choices, list):
+                    first = choices[0]
+                    if isinstance(first, dict):
+                        msg = first.get("message", {})
+                        if isinstance(msg, dict):
+                            output_text = msg.get("content", "")
+                        else:
+                            output_text = str(msg)
+                if not output_text:
+                    output_text = str(response.get("content", ""))
+            if output_text:
+                span.set_attribute("output.value", _safe_serialize(output_text, max_len=8000))
+                span.set_attribute("output.mime_type", "text/plain")
+        except Exception:
+            pass
+
         span.set_status(_Status(_StatusCode.OK))
         span.end()
         _debug(f"ended llm.invoke span for {key} duration={api_duration:.3f}s")
@@ -457,6 +524,9 @@ def on_pre_tool_call(
                 attrs[f"tool.arg.{k}"] = v
         else:
             attrs["tool.args_preview"] = str(safe_args)[:4000]
+        # Also set as input.value for Phoenix UI
+        attrs["input.value"] = str(safe_args)[:8000]
+        attrs["input.mime_type"] = "application/json"
     except Exception:
         pass
 
@@ -540,11 +610,20 @@ def on_post_tool_call(
                     span.set_attribute("tool.result.preview", result)
                 else:
                     span.set_attribute("tool.result.preview", result[:500] + "...")
+                # Full result as output.value for Phoenix UI
+                span.set_attribute("output.value", _safe_serialize(result, max_len=8000))
+                span.set_attribute("output.mime_type", "text/plain")
             elif isinstance(result, dict):
                 span.set_attribute("tool.result.keys", list(result.keys())[:20])
                 if "error" in result:
                     span.set_attribute("tool.result.has_error", True)
                     span.set_attribute("tool.result.error", str(result["error"])[:1000])
+                # Full result as output.value for Phoenix UI
+                span.set_attribute("output.value", _safe_serialize(result, max_len=8000))
+                span.set_attribute("output.mime_type", "application/json")
+            else:
+                span.set_attribute("output.value", _safe_serialize(str(result), max_len=8000))
+                span.set_attribute("output.mime_type", "text/plain")
         except Exception:
             pass
 
