@@ -271,3 +271,60 @@ class TestPhoenixPlugin:
             )
             output = result.stdout.strip()
             assert output.startswith("00-"), f"Expected W3C traceparent, got: {output}"
+
+    def test_llm_span_sets_session_id(self):
+        """LLM spans should include session.id for Phoenix session tracking."""
+        from plugins.observability.phoenix import on_pre_api_request
+
+        with patch("plugins.observability.phoenix._get_or_create_tracer") as mock_get_tracer:
+            mock_span = MagicMock()
+            mock_tracer = MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+            mock_get_tracer.return_value = mock_tracer
+
+            on_pre_api_request(
+                api_request_id="req-session-test",
+                model="gpt-4",
+                provider="openai",
+                session_id="sess-abc-123",
+                request_messages=[{"role": "user", "content": "hi"}],
+                started_at=0,
+            )
+
+            # Verify session.id was set
+            session_calls = [c for c in mock_span.set_attribute.call_args_list if c[0][0] == "session.id"]
+            assert len(session_calls) == 1, "session.id should be set on LLM span"
+            assert session_calls[0][0][1] == "sess-abc-123"
+
+            # Verify openinference.span.kind = "llm"
+            kind_calls = [c for c in mock_span.set_attribute.call_args_list if c[0][0] == "openinference.span.kind"]
+            assert len(kind_calls) == 1, "openinference.span.kind should be set on LLM span"
+            assert kind_calls[0][0][1] == "llm"
+
+    def test_tool_span_sets_session_id(self):
+        """Tool spans should include session.id for Phoenix session tracking."""
+        from plugins.observability.phoenix import on_pre_tool_call
+
+        with patch("plugins.observability.phoenix._get_or_create_tracer") as mock_get_tracer:
+            mock_span = MagicMock()
+            mock_tracer = MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+            mock_get_tracer.return_value = mock_tracer
+
+            with patch("plugins.observability.phoenix.get_current_traceparent", return_value=None):
+                on_pre_tool_call(
+                    tool_name="terminal",
+                    tool_call_id="tc-session-test",
+                    session_id="sess-abc-123",
+                    args={"command": "echo hello"},
+                )
+
+            # Verify session.id was set
+            session_calls = [c for c in mock_span.set_attribute.call_args_list if c[0][0] == "session.id"]
+            assert len(session_calls) == 1, "session.id should be set on tool span"
+            assert session_calls[0][0][1] == "sess-abc-123"
+
+            # Verify openinference.span.kind = "tool"
+            kind_calls = [c for c in mock_span.set_attribute.call_args_list if c[0][0] == "openinference.span.kind"]
+            assert len(kind_calls) == 1, "openinference.span.kind should be set on tool span"
+            assert kind_calls[0][0][1] == "tool"

@@ -61,6 +61,17 @@ except Exception as _exc:
     TraceContextTextMapPropagator = None  # type: ignore[assignment,misc]
 
 
+# OpenInference semantic conventions — lightweight, no heavy transitive imports
+_SpanAttributes: Any = None
+_OI_AVAILABLE = False
+try:
+    from openinference.semconv.trace import SpanAttributes
+    _SpanAttributes = SpanAttributes
+    _OI_AVAILABLE = True
+except Exception as _exc:
+    logger.debug("phoenix plugin: openinference.semconv not available (%s)", _exc)
+
+
 try:
     from arize.phoenix.otel import register as _phoenix_register
 except Exception as _exc:
@@ -99,6 +110,25 @@ def _safe_serialize(value: Any, max_len: int = 2000) -> Any:
     if isinstance(value, (list, tuple)):
         return [_safe_serialize(v, max_len) for v in list(value)[:50]]
     return _safe_serialize(repr(value), max_len)
+
+
+def _set_session_and_kind(span: Any, session_id: str, kind: str) -> None:
+    """Attach Phoenix session.id and openinference.span.kind to a span."""
+    if span is None:
+        return
+    try:
+        if session_id:
+            if _OI_AVAILABLE and _SpanAttributes is not None:
+                span.set_attribute(_SpanAttributes.SESSION_ID, session_id)
+            else:
+                span.set_attribute("session.id", session_id)
+        if kind:
+            if _OI_AVAILABLE and _SpanAttributes is not None:
+                span.set_attribute(_SpanAttributes.OPENINFERENCE_SPAN_KIND, kind)
+            else:
+                span.set_attribute("openinference.span.kind", kind)
+    except Exception:
+        pass
 
 
 def _get_or_create_tracer() -> Any:
@@ -325,6 +355,8 @@ def on_pre_api_request(
         logger.debug("phoenix plugin: failed to start llm.invoke span: %s", exc)
         return
 
+    _set_session_and_kind(span, session_id, "llm")
+
     # Capture the actual prompt as input.value for Phoenix UI
     try:
         input_text = ""
@@ -535,6 +567,8 @@ def on_pre_tool_call(
     except Exception as exc:
         logger.debug("phoenix plugin: failed to start tool.invoke span: %s", exc)
         return None
+
+    _set_session_and_kind(span, session_id, "tool")
 
     with _STATE_LOCK:
         _SPAN_STATE[key] = {
