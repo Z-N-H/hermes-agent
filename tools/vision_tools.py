@@ -588,8 +588,18 @@ def _supports_media_in_tool_results(provider: str, model: str) -> bool:
     # aren't in the hardcoded list above.
     try:
         from providers import get_provider_profile
-        profile = get_provider_profile(p)
+        # Normalize "custom:<name>" to "custom" for profile lookup.
+        profile_name = p
+        if profile_name.startswith("custom:"):
+            profile_name = "custom"
+        profile = get_provider_profile(profile_name)
         if profile is not None and profile.supports_vision:
+            return True
+        # Custom/local OpenAI-compatible endpoints (vLLM, llama.cpp, etc.)
+        # declare supports_vision_tool_messages=True when their wire format
+        # accepts image_url blocks inside tool results even though the
+        # underlying model's vision capability isn't statically known.
+        if profile is not None and getattr(profile, "supports_vision_tool_messages", False):
             return True
     except Exception:
         pass

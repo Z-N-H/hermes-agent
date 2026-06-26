@@ -3385,6 +3385,19 @@ def resolve_provider_client(
     # Normalise aliases
     provider = _normalize_aux_provider(provider)
 
+    # If a custom:<name> provider doesn't have a named custom_providers entry,
+    # fall back to the generic custom endpoint path (uses model.base_url from
+    # config) so auxiliary tasks (vision, compression, etc.) route to the same
+    # endpoint as the main agent instead of silently failing and falling back
+    # to unrelated aggregator backends.
+    if original_provider.startswith("custom:") and original_provider != "custom":
+        try:
+            from hermes_cli.runtime_provider import _get_named_custom_provider
+            if not _get_named_custom_provider(original_provider):
+                provider = "custom"
+        except Exception:
+            pass
+
     # Universal model-resolution fallback chain.  Callers (notably title
     # generation, vision, session search, and other auxiliary tasks) can
     # reach this function without an explicit model — the user picked their

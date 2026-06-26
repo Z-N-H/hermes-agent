@@ -309,6 +309,25 @@ def _lookup_supports_vision(
         logger.debug("image_routing: caps lookup failed for %s:%s — %s", provider, model, exc)
         return None
     if caps is None:
+        # models.dev has no entry for this provider (common for custom/
+        # local endpoints). Fall back to the provider profile — if the
+        # profile declares vision support (either via supports_vision or
+        # supports_vision_tool_messages) treat the model as vision-capable.
+        try:
+            from providers import get_provider_profile
+            # Normalize "custom:<name>" to "custom" for profile lookup
+            # since the registry only holds the base "custom" profile.
+            profile_name = provider
+            if isinstance(profile_name, str) and profile_name.startswith("custom:"):
+                profile_name = "custom"
+            profile = get_provider_profile(profile_name)
+            if profile is not None:
+                if getattr(profile, "supports_vision", False):
+                    return True
+                if getattr(profile, "supports_vision_tool_messages", False):
+                    return True
+        except Exception:
+            pass
         return None
     return bool(caps.supports_vision)
 

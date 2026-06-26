@@ -1,0 +1,11 @@
+name: phoenix
+version: "1.0.0"
+description: "Arize Phoenix OTel observability for Hermes — traces every LLM call and tool execution via OpenTelemetry. Opt-in via `hermes plugins enable observability/phoenix` or `hermes tools → Phoenix Observability`."
+author: NousResearch
+requires_env:
+  - PHOENIX_COLLECTOR_ENDPOINT
+hooks:
+  - pre_api_request
+  - post_api_request
+  - pre_tool_call
+  - post_tool_call

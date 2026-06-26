@@ -1,0 +1,4 @@
+# Security plugin binaries - download on demand
+*.tar.xz
+shellcheck
+vet

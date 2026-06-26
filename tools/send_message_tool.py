@@ -16,6 +16,35 @@ from email.utils import formatdate
 
 from agent.redact import redact_sensitive_text
 
+# Slack Block Kit support for rich message formatting
+_try_slack_blocks = False
+markdown_to_slack_blocks = None  # type: ignore
+blocks_to_payload = None  # type: ignore
+try:
+    from gateway.platforms.slack_blocks import markdown_to_slack_blocks, blocks_to_payload  # noqa: F811
+    _try_slack_blocks = True
+except Exception:
+    pass
+
+
+def _should_use_block_kit(content: str) -> bool:
+    """Return True when the content benefits from Block Kit layout."""
+    if not content or len(content) < 80:
+        return False
+    has_header = bool(re.search(r"^#{1,6}\s+", content, re.MULTILINE))
+    has_code = "```" in content
+    has_table = bool(re.search(r"^\s*\|[^|]+\|", content, re.MULTILINE))
+    has_divider = bool(re.search(r"^\s*([-=*_]){3,}\s*$", content, re.MULTILINE))
+    structural = has_header or has_code or has_table or has_divider
+    if structural:
+        return True
+    if len(content) > 1200:
+        has_bold_header = bool(re.search(r"^\*\*.+\*\*$", content, re.MULTILINE))
+        if has_bold_header:
+            return True
+    return False
+
+
 logger = logging.getLogger(__name__)
 
 _TELEGRAM_TOPIC_TARGET_RE = re.compile(r"^\s*(-?\d+)(?::(\d+))?\s*$")
@@ -1168,7 +1197,12 @@ async def _send_telegram(token, chat_id, message, media_files=None, thread_id=No
 
 
 async def _send_slack(token, chat_id, message, thread_ts=None):
-    """Send via Slack Web API."""
+    """Send via Slack Web API.
+
+    Uses Block Kit rich layout when the message contains structural elements
+    (headers, code blocks, tables, dividers) and falls back to plain mrkdwn
+    for simple messages or when Block Kit conversion fails.
+    """
     try:
         import aiohttp
     except ImportError:
@@ -1179,10 +1213,32 @@ async def _send_slack(token, chat_id, message, thread_ts=None):
         _sess_kw, _req_kw = proxy_kwargs_for_aiohttp(_proxy)
         url = "https://slack.com/api/chat.postMessage"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        use_blocks = _try_slack_blocks and _should_use_block_kit(message)
+        payload: dict = {"channel": chat_id, "text": message}
+        if thread_ts:
+            payload["thread_ts"] = thread_ts
+
+        if use_blocks and markdown_to_slack_blocks and blocks_to_payload:
+            try:
+                blocks = markdown_to_slack_blocks(message)
+                if blocks:
+                    blocks_payload = blocks_to_payload(blocks, text_fallback=message[:4000])
+                    payload["text"] = blocks_payload["text"]
+                    payload["blocks"] = blocks_payload["blocks"]
+                else:
+                    # Empty blocks → fall back to plain mrkdwn
+                    payload["text"] = message
+                    payload["mrkdwn"] = True
+            except Exception:
+                logger.debug("Block Kit conversion failed, falling back to plain text", exc_info=True)
+                payload["text"] = message
+                payload["mrkdwn"] = True
+        else:
+            payload["text"] = message
+            payload["mrkdwn"] = True
+
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), **_sess_kw) as session:
-            payload = {"channel": chat_id, "text": message, "mrkdwn": True}
-            if thread_ts:
-                payload["thread_ts"] = thread_ts
             async with session.post(url, headers=headers, json=payload, **_req_kw) as resp:
                 data = await resp.json()
                 if data.get("ok"):

@@ -18,8 +18,8 @@ def markdown_to_slack_blocks(content: str) -> List[Dict[str, Any]]:
     * ``# Title`` → ``header`` block (plain_text, max 150 chars)
     * ``## Subtitle`` → ``section`` with bold text
     * ``---`` / ``***`` / ``___`` → ``divider`` block
-    * ``\`\`\`lang\ncode\n\`\`\``` → ``rich_text`` block with
-      ``rich_text_preformatted`` and ``language`` field
+    * ``\`\`\`lang\ncode\n\`\`\``` → ``section`` block with mrkdwn code block
+      (rich_text is not supported by chat.postMessage API)
     * ``| table | rows |`` → ``section`` with mrkdwn code block
     * Bullet / numbered lists → ``section`` with mrkdwn
     * ``> quote`` → ``section`` with mrkdwn blockquote
@@ -86,7 +86,10 @@ def markdown_to_slack_blocks(content: str) -> List[Dict[str, Any]]:
             i += 1
             continue
 
-        # Fenced code block → rich_text with syntax highlighting
+        # Fenced code block → section with mrkdwn code block
+        # Note: rich_text blocks are NOT supported by chat.postMessage API
+        # (desktop/mobile apps only). We use standard section blocks with
+        # mrkdwn code formatting instead.
         if stripped.startswith("```"):
             _flush_text_buffer()
             lang_match = re.match(r"^```(\w+)", stripped)
@@ -99,17 +102,13 @@ def markdown_to_slack_blocks(content: str) -> List[Dict[str, Any]]:
             i += 1  # skip closing ```
             code = "\n".join(code_lines)
             if code:
-                preformatted: Dict[str, Any] = {
-                    "type": "rich_text_preformatted",
-                    "elements": [
-                        {"type": "text", "text": code},
-                    ],
-                }
-                if language:
-                    preformatted["language"] = language
+                lang_tag = f"{language}\n" if language else ""
                 blocks.append({
-                    "type": "rich_text",
-                    "elements": [preformatted],
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"```{lang_tag}{code}\n```",
+                    },
                 })
             continue
 
