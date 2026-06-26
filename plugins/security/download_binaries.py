@@ -52,55 +52,19 @@ def download_shellcheck() -> Path:
 
 
 def download_vet() -> Path:
-    """Download the latest vet binary from GitHub."""
-    machine = platform.machine().lower()
-    system = platform.system().lower()
+    """Download the latest vet script from GitHub releases.
 
-    # vet releases are at github.com/vet-run/vet/releases
-    # The install script is the canonical distribution method
-    url = "https://getvet.sh/install.sh"
+    vet is distributed as a single bash script, not a platform binary.
+    """
+    # Direct download from GitHub latest release
+    url = "https://github.com/vet-run/vet/releases/latest/download/vet"
 
-    print(f"Downloading vet...")
+    print(f"Downloading vet from {url} ...")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        install_script = Path(tmpdir) / "install.sh"
-        urlretrieve(url, install_script)
-
-        # The install script downloads vet to /usr/local/bin by default
-        # We need to inspect it to find the actual binary URL
-        script_content = install_script.read_text()
-
-        # Extract the download URL from the script
-        # Look for pattern like: https://github.com/vet-run/vet/releases/download/...
-        import re
-
-        match = re.search(r'https://github\.com/vet-run/vet/releases/download/[^"\'\s]+', script_content)
-        if match:
-            binary_url = match.group(0)
-            # Determine the correct binary name based on platform
-            if system == "darwin":
-                binary_name = "vet-darwin-amd64" if machine in ("x86_64", "amd64") else "vet-darwin-arm64"
-            else:
-                binary_name = "vet-linux-amd64" if machine in ("x86_64", "amd64") else "vet-linux-arm64"
-
-            # Try to construct the binary URL
-            base_url = binary_url.rsplit("/", 1)[0]
-            binary_url = f"{base_url}/{binary_name}"
-
-            try:
-                urlretrieve(binary_url, VET_PATH)
-                VET_PATH.chmod(VET_PATH.stat().st_mode | stat.S_IEXEC)
-                print(f"vet installed to {VET_PATH}")
-                return VET_PATH
-            except Exception:
-                # Fall back: the vet script itself is the tool
-                # It's a bash script, so we can use it directly
-                shutil.copy2(install_script, VET_PATH)
-                VET_PATH.chmod(VET_PATH.stat().st_mode | stat.S_IEXEC)
-                print(f"vet install script saved to {VET_PATH}")
-                return VET_PATH
-        else:
-            raise RuntimeError("Could not find vet download URL in install script")
+    urlretrieve(url, VET_PATH)
+    VET_PATH.chmod(VET_PATH.stat().st_mode | stat.S_IEXEC)
+    print(f"vet installed to {VET_PATH}")
+    return VET_PATH
 
 
 def ensure_binaries() -> tuple[Path | None, Path | None]:
