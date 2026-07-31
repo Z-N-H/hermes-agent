@@ -6099,6 +6099,29 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                     ("class:status-bar-dim", " │"),
                 ]
 
+            # ── Plugin status_bar_fragment hook ────────────────────────
+            # Plugins (e.g. tps_monitor) can inject extra fragments here.
+            # invoke_hook returns a list of callback results; each callback
+            # returns a list of (style, text) tuples, so we flatten one level.
+            try:
+                from hermes_cli.plugins import invoke_hook
+                plugin_frags = invoke_hook(
+                    "status_bar_fragment",
+                    cli=self,
+                    agent=getattr(self, "agent", None),
+                )
+                for cb_result in plugin_frags or []:
+                    if not cb_result:
+                        continue
+                    for pf in cb_result:
+                        if isinstance(pf, (list, tuple)) and len(pf) == 2:
+                            frag_text = pf[1] if isinstance(pf[1], str) else str(pf[1])
+                            if self._status_bar_display_width(frag_text) > 0:
+                                frags.append(("class:status-bar-dim", " │ "))
+                                frags.append(pf)
+            except Exception:
+                pass
+
             total_width = sum(self._status_bar_display_width(text) for _, text in frags)
             if total_width > width:
                 plain_text = "".join(text for _, text in frags)
