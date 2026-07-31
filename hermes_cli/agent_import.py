@@ -809,8 +809,13 @@ def import_agent_command(args) -> None:
     source_dir = Path(explicit_source) if explicit_source else default_source_dir(agent)
 
     print()
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
     print(color("┌─────────────────────────────────────────────────────────┐", Colors.MAGENTA))
-    print(color("│          ⚕ Hermes — Import From Another Agent          │", Colors.MAGENTA))
+    print(color(f"│          {_icon} Hermes — Import From Another Agent          │", Colors.MAGENTA))
     print(color("└─────────────────────────────────────────────────────────┘", Colors.MAGENTA))
 
     if not source_dir.is_dir():

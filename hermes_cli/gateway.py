@@ -4890,8 +4890,13 @@ def run_gateway(verbose: int = 0, quiet: bool = False, replace: bool = False, fo
 
     from gateway.run import start_gateway
 
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
     print("┌─────────────────────────────────────────────────────────┐")
-    print("│           ⚕ Hermes Gateway Starting...                 │")
+    print(f"│           {_icon} Hermes Gateway Starting...                 │")
     print("├─────────────────────────────────────────────────────────┤")
     print("│  Messaging platforms + cron scheduler                    │")
     print("│  Press Ctrl+C to stop                                   │")
@@ -6266,6 +6271,11 @@ def gateway_setup():
         return
 
     print()
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
     print(
         color(
             "┌─────────────────────────────────────────────────────────┐",
@@ -6274,7 +6284,7 @@ def gateway_setup():
     )
     print(
         color(
-            "│             ⚕ Gateway Setup                            │", Colors.MAGENTA
+            f"│             {_icon} Gateway Setup                            │", Colors.MAGENTA
         )
     )
     print(

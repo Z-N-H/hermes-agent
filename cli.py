@@ -224,6 +224,7 @@ from hermes_cli.browser_connect import (
 )
 from hermes_cli.env_loader import load_hermes_dotenv
 from utils import base_url_host_matches, fast_safe_load
+from hermes_icons import ICON_BOLT
 
 _hermes_home = get_hermes_home()
 _project_env = Path(__file__).parent / '.env'
@@ -807,7 +808,7 @@ except Exception:
 
 # Initialize the skin engine from config
 try:
-    from hermes_cli.skin_engine import init_skin_from_config
+    from hermes_cli.skin_engine import init_skin_from_config, get_active_brand_icon
     init_skin_from_config(CLI_CONFIG)
 except Exception:
     pass  # Skin engine is optional — default skin used if unavailable
@@ -3560,6 +3561,46 @@ def _apply_bracketed_paste_timeout_patch() -> None:
     except Exception as exc:  # noqa: BLE001 — defensive: never break startup
         logger.debug("Bracketed-paste timeout patch skipped: %s", exc)
 
+def _apply_prompt_toolkit_tuple_style_patch() -> None:
+    """Patch prompt_toolkit's Char to coerce tuple styles into strings.
+
+    Hermes occasionally triggers a traceback in ``Screen.fill_area``:
+    ``can only concatenate str (not tuple) to str``.  The root cause is
+    that a ``Char`` is created with ``style`` set to a tuple instead of a
+    string.  When ``fill_area`` later prepends/appends style classes by
+    doing ``prepend_style + cell.style + append_style``, the tuple breaks
+    the concatenation.
+
+    Rather than hunt every fragment generator, we defensively coerce
+    tuple styles to space-joined strings at the ``Char`` constructor.
+    This is idempotent — repeated calls are no-ops via a sentinel.
+    """
+    try:
+        from prompt_toolkit.layout.screen import Char as _PtChar
+
+        if getattr(_PtChar, "_hermes_tuple_style_patched", False):
+            return
+
+        _orig_char_init = _PtChar.__init__
+
+        def _patched_char_init(self, char: str = " ", style: str = "") -> None:
+            if isinstance(style, tuple):
+                import traceback
+                logger.warning(
+                    "prompt_toolkit Char created with tuple style: %r. "
+                    "Stack trace follows (this is the real source of the bug).",
+                    style,
+                )
+                for line in traceback.format_stack():
+                    logger.warning(line.rstrip())
+                style = " ".join(str(s) for s in style)
+            _orig_char_init(self, char, style)
+
+        _PtChar.__init__ = _patched_char_init
+        _PtChar._hermes_tuple_style_patched = True
+    except Exception:
+        pass
+
 
 # Cursor Position Report (CPR / DSR) response, format ``ESC[<row>;<col>R``.
 # prompt_toolkit's _on_resize() + renderer send ``ESC[6n`` queries to the
@@ -3947,8 +3988,8 @@ def _build_compact_banner() -> str:
     dim_color = _skin.get_color("banner_dim", "#B8860B") if _skin else "#B8860B"
 
     if skin_name == "default":
-        line1 = "⚕ NOUS HERMES - AI Agent Framework"
-        tiny_line = "⚕ NOUS HERMES"
+        line1 = f"{get_active_brand_icon()} NOUS HERMES - AI Agent Framework"
+        tiny_line = f"{get_active_brand_icon()} NOUS HERMES"
     else:
         agent_name = _skin.get_branding("agent_name", "Hermes Agent") if _skin else "Hermes Agent"
         line1 = f"{agent_name} - AI Agent Framework"
@@ -5881,7 +5922,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             yolo_active = self._is_session_yolo_active()
             goal_segment = self._status_bar_goal_segment(snapshot)
             if width < 52:
-                text = f"{battery_prefix}⚕ {snapshot['model_short']} · {duration_label}"
+                text = f"{battery_prefix}{get_active_brand_icon()} {snapshot['model_short']} · {duration_label}"
                 if goal_segment:
                     text += f" · {goal_segment}"
                 if focus_label:
@@ -5890,7 +5931,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                     text += " · ⚠ YOLO"
                 return self._trim_status_bar_text(text, width)
             if width < 76:
-                parts = [f"⚕ {snapshot['model_short']}", percent_label]
+                parts = [f"{get_active_brand_icon()} {snapshot['model_short']}", percent_label]
                 if battery_label:
                     parts.insert(0, battery_label)
                 compressions = snapshot.get("compressions", 0)
@@ -5922,7 +5963,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 context_label = "ctx --"
 
             compressions = snapshot.get("compressions", 0)
-            parts = [f"⚕ {snapshot['model_short']}", context_label, percent_label]
+            parts = [f"{get_active_brand_icon()} {snapshot['model_short']}", context_label, percent_label]
             if battery_label:
                 parts.insert(0, battery_label)
             if compressions:
@@ -5951,7 +5992,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 parts.append("⚠ YOLO")
             return self._trim_status_bar_text(" │ ".join(parts), width)
         except Exception:
-            return f"⚕ {self.model if getattr(self, 'model', None) else 'Hermes'}"
+            return f"{get_active_brand_icon()} {self.model if getattr(self, 'model', None) else 'Hermes'}"
 
     def _get_status_bar_fragments(self):
         if not self._status_bar_visible or getattr(self, '_model_picker_state', None):
@@ -5973,8 +6014,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
 
             if width < 52:
                 frags = [
-                    ("class:status-bar", " ⚕ "),
-                    ("class:status-bar-strong", snapshot["model_short"]),
+                    ("class:status-bar", f" {get_active_brand_icon()} "),
+                    ("class:status-bar-model", snapshot["model_short"]),
                     ("class:status-bar-dim", " · "),
                     ("class:status-bar-dim", duration_label),
                 ]
@@ -5997,8 +6038,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                     bg_proc_count = snapshot.get("active_background_processes", 0)
                     bg_subagent_count = snapshot.get("active_background_subagents", 0)
                     frags = [
-                        ("class:status-bar", " ⚕ "),
-                        ("class:status-bar-strong", snapshot["model_short"]),
+                        ("class:status-bar", f" {get_active_brand_icon()} "),
+                        ("class:status-bar-model", snapshot["model_short"]),
                         ("class:status-bar-dim", " · "),
                         (self._status_bar_context_style(percent), percent_label),
                     ]
@@ -6042,8 +6083,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                     bg_proc_count = snapshot.get("active_background_processes", 0)
                     bg_subagent_count = snapshot.get("active_background_subagents", 0)
                     frags = [
-                        ("class:status-bar", " ⚕ "),
-                        ("class:status-bar-strong", snapshot["model_short"]),
+                        ("class:status-bar", f" {get_active_brand_icon()} "),
+                        ("class:status-bar-model", snapshot["model_short"]),
                         ("class:status-bar-dim", " │ "),
                         ("class:status-bar-dim", context_label),
                         ("class:status-bar-dim", " │ "),
@@ -6671,10 +6712,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             try:
                 from hermes_cli.skin_engine import get_active_skin
                 _skin = get_active_skin()
-                label = _skin.get_branding("response_label", "⚕ Hermes")
+                label = _skin.get_branding("response_label", f"{get_active_brand_icon()} Hermes")
                 _text_hex = _skin.get_color("banner_text", "#FFF8DC")
             except Exception:
-                label = "⚕ Hermes"
+                label = f"{get_active_brand_icon()} Hermes"
                 _text_hex = "#FFF8DC"
             # Build a true-color ANSI escape for the response text color
             # so streamed content matches the Rich Panel appearance.
@@ -11651,7 +11692,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         self._close_reasoning_box()
 
         from agent.display import get_tool_emoji
-        emoji = get_tool_emoji(tool_name, default="⚡")
+        emoji = get_tool_emoji(tool_name, default=ICON_BOLT)
         _cprint(f"  ┊ {emoji} preparing {tool_name}…")
 
     # ====================================================================
@@ -13574,7 +13615,12 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                         if not _streaming_box_opened:
                             _streaming_box_opened = True
                             w = self._scrollback_box_width(getattr(self.console, "width", 80))
-                            label = " ⚕ Hermes "
+                            try:
+                                from hermes_cli.skin_engine import get_active_brand_icon
+                                _icon = get_active_brand_icon()
+                            except Exception:
+                                _icon = "⚕"
+                            label = f" {_icon} Hermes "
                             if self.show_timestamps:
                                 label = f"{label}{datetime.now().strftime(getattr(self, 'timestamp_format', '%H:%M'))} "
                             fill = w - 2 - HermesCLI._status_bar_display_width(label)
@@ -14029,13 +14075,14 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             if response and not response_previewed:
                 # Use skin engine for label/color with fallback
                 try:
-                    from hermes_cli.skin_engine import get_active_skin
+                    from hermes_cli.skin_engine import get_active_skin, get_active_brand_icon
                     _skin = get_active_skin()
-                    label = _skin.get_branding("response_label", "⚕ Hermes")
+                    label = _skin.get_branding("response_label", f"{get_active_brand_icon()} Hermes")
                     _resp_color = _maybe_remap_for_light_mode(_skin.get_color("response_border", "#CD7F32"))
                     _resp_text = _maybe_remap_for_light_mode(_skin.get_color("banner_text", "#FFF8DC"))
                 except Exception:
-                    label = "⚕ Hermes"
+                    from hermes_cli.skin_engine import get_active_brand_icon
+                    label = f"{get_active_brand_icon()} Hermes"
                     _resp_color = _maybe_remap_for_light_mode("#CD7F32")
                     _resp_text = _maybe_remap_for_light_mode("#FFF8DC")
 
@@ -14475,7 +14522,12 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         if self._command_running:
             return _state_fragment("class:prompt-working", self._command_spinner_frame())
         if self._agent_running:
-            return _state_fragment("class:prompt-working", "⚕")
+            try:
+                from hermes_cli.skin_engine import get_active_brand_icon
+                _icon = get_active_brand_icon()
+            except Exception:
+                _icon = "⚕"
+            return _state_fragment("class:prompt-working", _icon)
         if self._voice_mode:
             return _state_fragment("class:voice-prompt", "🎤")
         return [("class:prompt", symbol)]
@@ -16661,6 +16713,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             'hint': '#888888 italic',
             'status-bar': 'bg:#1a1a2e #C0C0C0',
             'status-bar-strong': 'bg:#1a1a2e #FFD700 bold',
+            'status-bar-model': 'bg:#1a1a2e #FF69B4 bold',
             'status-bar-dim': 'bg:#1a1a2e #8B8682',
             'status-bar-good': 'bg:#1a1a2e #8FBC8F bold',
             'status-bar-warn': 'bg:#1a1a2e #FFD700 bold',
@@ -16810,6 +16863,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         # Apply bracketed-paste timeout recovery so torn ESC[201~ end marks
         # don't permanently freeze the input (issue #16263). Idempotent.
         _apply_bracketed_paste_timeout_patch()
+
+        # Defensively coerce tuple styles to strings in prompt_toolkit Char.
+        # See _apply_prompt_toolkit_tuple_style_patch docstring for details.
+        _apply_prompt_toolkit_tuple_style_patch()
 
         _original_on_resize = app._on_resize
 

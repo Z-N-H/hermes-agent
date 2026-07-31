@@ -2401,7 +2401,12 @@ def _launch_tui(
         from hermes_cli.relaunch import relaunch
 
         print()
-        print("⚕ Launching update...")
+        try:
+            from hermes_cli.skin_engine import get_active_brand_icon
+            _icon = get_active_brand_icon()
+        except Exception:
+            _icon = "⚕"
+        print(f"{_icon} Launching update...")
         print()
         relaunch(["update"], preserve_inherited=False)
 
@@ -2731,7 +2736,12 @@ def cmd_whatsapp(args):
     from hermes_constants import find_node_executable, with_hermes_node_path
 
     print()
-    print("⚕ WhatsApp Setup")
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
+    print(f"{_icon} WhatsApp Setup")
     print("=" * 50)
 
     # ── Step 1: Choose mode ──────────────────────────────────────────────
@@ -2936,20 +2946,25 @@ def cmd_whatsapp(args):
         save_env_value("WHATSAPP_ENABLED", "true")
         print("✓ WhatsApp paired successfully!")
         print()
+        try:
+            from hermes_cli.skin_engine import get_active_brand_icon
+            _icon = get_active_brand_icon()
+        except Exception:
+            _icon = "⚕"
         if wa_mode == "bot":
             print("  Next steps:")
             print("    1. Start the gateway:  hermes gateway")
             print("    2. Send a message to the bot's WhatsApp number")
             print("    3. The agent will reply automatically")
             print()
-            print("  Tip: Agent responses are prefixed with '⚕ Hermes Agent'")
+            print(f"  Tip: Agent responses are prefixed with '{_icon} Hermes Agent'")
         else:
             print("  Next steps:")
             print("    1. Start the gateway:  hermes gateway")
             print("    2. Open WhatsApp → Message Yourself")
             print("    3. Type a message — the agent will reply")
             print()
-            print("  Tip: Agent responses are prefixed with '⚕ Hermes Agent'")
+            print(f"  Tip: Agent responses are prefixed with '{_icon} Hermes Agent'")
             print("  so you can tell them apart from your own messages.")
         print()
         print("  Or install as a service: hermes gateway install")
