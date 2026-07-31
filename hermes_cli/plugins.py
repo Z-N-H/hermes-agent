@@ -128,6 +128,15 @@ _install_plugin_debug_handler()
 VALID_HOOKS: Set[str] = {
     "pre_tool_call",
     "post_tool_call",
+    # Fires when a tracked background process (tools/process_registry.py)
+    # actually finishes -- unlike post_tool_call, which for a background
+    # terminal() call fires at dispatch time (the process has only just
+    # started). Kwargs: session_id, session_key, command, cwd, exit_code,
+    # task_id, output (ANSI-stripped tail). Fires regardless of whether
+    # notify_on_complete was set, so plugins can durably record a process's
+    # outcome even when nothing in the conversation ever reads the
+    # completion notification.
+    "on_process_complete",
     "transform_terminal_output",
     "transform_tool_result",
     # Transform LLM output before it's returned to the user.

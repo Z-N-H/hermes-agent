@@ -27,6 +27,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from agent.prompt_builder import (
+    CRITICAL_BOUNDARY_GUIDANCE,
     DEFAULT_AGENT_IDENTITY,
     GOOGLE_MODEL_OPERATIONAL_GUIDANCE,
     HERMES_AGENT_HELP_GUIDANCE,
@@ -84,6 +85,9 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
 
     # ── Stable tier ────────────────────────────────────────────────
     stable_parts: List[str] = []
+
+    # Hard-coded critical boundary — must never be bypassed or missed.
+    stable_parts.append(CRITICAL_BOUNDARY_GUIDANCE)
 
     # Try SOUL.md as primary identity unless the caller explicitly skipped it.
     # Some execution modes (cron) still want HERMES_HOME persona while keeping

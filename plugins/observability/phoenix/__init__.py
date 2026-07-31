@@ -49,6 +49,7 @@ try:
     from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
     from opentelemetry.sdk.trace import TracerProvider as _SDKTracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+    from opentelemetry.sdk.resources import Resource as _OTelResource
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
     _OTEL_AVAILABLE = True
@@ -158,9 +159,14 @@ def _get_or_create_tracer() -> Any:
         except Exception as exc:
             logger.warning("phoenix plugin: arize-phoenix-otel register failed (%s), falling back to basic OTLP", exc)
 
-    # Fallback: manual SDK setup
+    # Fallback: manual SDK setup. Set the project resource attribute —
+    # without it Phoenix files every span under "default" and PHOENIX_PROJECT_NAME
+    # is silently ignored on this path (the hermes venv lacks
+    # arize-phoenix-otel, so this fallback is the one that actually runs).
     try:
-        _TRACER_PROVIDER = _SDKTracerProvider()
+        _TRACER_PROVIDER = _SDKTracerProvider(
+            resource=_OTelResource.create({"openinference.project.name": project_name})
+        )
         exporter = OTLPSpanExporter(endpoint=endpoint)
         _TRACER_PROVIDER.add_span_processor(BatchSpanProcessor(exporter))
         _otel_trace.set_tracer_provider(_TRACER_PROVIDER)
@@ -719,18 +725,31 @@ def _install_subprocess_patch() -> None:
 
         _ORIGINAL_POPEN = subprocess.Popen
 
-        def _popen_with_traceparent(*args, **kwargs):
-            env = kwargs.get("env")
-            if env is not None:
-                _inject_traceparent_into_env(env)
-            else:
-                # When env is not provided, subprocess inherits os.environ.
-                # We must create a copy and inject TRACEPARENT so we don't
-                # mutate the global os.environ dict.
-                kwargs["env"] = _inject_traceparent_into_env(dict(os.environ))
-            return _ORIGINAL_POPEN(*args, **kwargs)
+        class _PopenWithTraceparent(_ORIGINAL_POPEN):
+            """Popen subclass that injects TRACEPARENT into the child env.
 
-        subprocess.Popen = _popen_with_traceparent
+            This must stay a *class*, not a bare wrapper function:
+            ``mcp/os/win32/utilities.py`` evaluates the annotation
+            ``subprocess.Popen[bytes]`` at class-definition time, and
+            subscripting a function raises ``TypeError: 'function' object is
+            not subscriptable``. With the function wrapper, any process that
+            loaded this plugin before importing ``mcp`` (gateway startup,
+            every cron job) lost all MCP tools — the failure surfaced only as
+            a one-line warning in errors.log, 2026-07-24 through 30.
+            """
+
+            def __init__(self, *args, **kwargs):
+                env = kwargs.get("env")
+                if env is not None:
+                    _inject_traceparent_into_env(env)
+                else:
+                    # When env is not provided, subprocess inherits os.environ.
+                    # We must create a copy and inject TRACEPARENT so we don't
+                    # mutate the global os.environ dict.
+                    kwargs["env"] = _inject_traceparent_into_env(dict(os.environ))
+                super().__init__(*args, **kwargs)
+
+        subprocess.Popen = _PopenWithTraceparent
         _SUBPROCESS_PATCHED = True
         _debug("subprocess.Popen patched for TRACEPARENT propagation")
     except Exception as exc:

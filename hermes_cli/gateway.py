@@ -612,6 +612,15 @@ def find_profile_gateway_processes(
 
 
 def _gateway_run_args_for_profile(profile: str) -> list[str]:
+    # Prefer `pantheon launch hermes-gateway` for the default profile so that
+    # the nono sandbox and Pantheon MCP config are applied on every restart,
+    # matching the behaviour of a manual `pantheon launch hermes-gateway` call.
+    if profile == "default":
+        import shutil
+        pantheon = shutil.which("pantheon") or "/home/znh/.local/bin/pantheon"
+        import os
+        if os.path.isfile(pantheon):
+            return [pantheon, "launch", "hermes-gateway", "--replace"]
     args = [get_python_path(), "-m", "hermes_cli.main"]
     if profile != "default":
         args.extend(["--profile", profile])
@@ -2451,6 +2460,16 @@ WantedBy=multi-user.target
     path_entries.extend(_build_wsl_interop_paths(path_entries))
     path_entries.extend(common_bin_paths)
     sane_path = ":".join(path_entries)
+    # Use `pantheon launch hermes-gateway` for the default profile so that
+    # pantheon's MCP config injection and sandbox are applied on every restart.
+    if not profile_arg:
+        _pantheon = shutil.which("pantheon") or "/home/znh/.local/bin/pantheon"
+        if os.path.isfile(_pantheon):
+            exec_start = f"{_pantheon} launch hermes-gateway"
+        else:
+            exec_start = f"{python_path} -m hermes_cli.main gateway run"
+    else:
+        exec_start = f"{python_path} -m hermes_cli.main {profile_arg} gateway run"
     return f"""[Unit]
 Description={SERVICE_DESCRIPTION}
 After=network-online.target
@@ -2459,7 +2478,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart={python_path} -m hermes_cli.main{f" {profile_arg}" if profile_arg else ""} gateway run
+ExecStart={exec_start}
 WorkingDirectory={working_dir}
 Environment="PATH={sane_path}"
 Environment="VIRTUAL_ENV={venv_dir}"

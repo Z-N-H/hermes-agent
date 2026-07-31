@@ -874,6 +874,25 @@ class ProcessRegistry:
         session._completion_event.set()
         self._write_checkpoint()
 
+        # Fires on the FIRST move regardless of notify_on_complete, so a
+        # plugin can durably record the outcome even for background runs
+        # nobody set up a conversational ping for -- unlike the completion
+        # queue below, which only feeds the model's own notification and is
+        # easy to never act on.
+        if was_running:
+            from hermes_cli.plugins import invoke_hook
+            from tools.ansi_strip import strip_ansi
+            invoke_hook(
+                "on_process_complete",
+                session_id=session.id,
+                session_key=session.session_key,
+                command=session.command,
+                cwd=session.cwd,
+                exit_code=session.exit_code,
+                task_id=session.task_id,
+                output=strip_ansi(session.output_buffer[-4000:]) if session.output_buffer else "",
+            )
+
         # Only enqueue completion notification on the FIRST move.  Without
         # this guard, kill_process() and the reader thread can both call
         # _move_to_finished(), producing duplicate [IMPORTANT: ...] messages.
