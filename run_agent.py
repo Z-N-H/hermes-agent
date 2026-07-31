@@ -5770,6 +5770,25 @@ class AIAgent:
                 where, _n,
             )
 
+    def _record_tps_token(self, text: str) -> None:
+        """Track tokens-per-second using a rolling window."""
+        if not text:
+            return
+        now = time.time()
+        # Approximate token count: ~4 chars per token (works well for English/CJK mix)
+        token_estimate = max(1, len(text) // 4)
+        self._tps_token_count += token_estimate
+        elapsed = now - self._tps_window_start
+        # Update TPS immediately so the status bar shows something even for
+        # fast responses.  The 1-second gate below is just for resetting the
+        # window to keep the rolling average fresh.
+        if elapsed > 0:
+            self._current_tps = self._tps_token_count / elapsed
+            self._last_tps_update = now
+        if elapsed >= 1.0:
+            self._tps_token_count = 0
+            self._tps_window_start = now
+
     def _fire_stream_delta(self, text: str) -> None:
         """Fire all registered stream delta callbacks (display + TTS)."""
         # Single-writer guard (#65991): a superseded stream must not interleave
@@ -5777,6 +5796,8 @@ class AIAgent:
         if self._stream_writer_superseded():
             self._note_dropped_stream_writer("_fire_stream_delta")
             return
+        # Track TPS for status bar display
+        self._record_tps_token(text)
         # If a tool iteration set the break flag, prepend a single paragraph
         # break before the first real text delta.  This prevents the original
         # problem (text concatenation across tool boundaries) without stacking
@@ -5835,6 +5856,7 @@ class AIAgent:
         if self._stream_writer_superseded():
             self._note_dropped_stream_writer("_fire_reasoning_delta")
             return
+        self._record_tps_token(text)
         cb = self.reasoning_callback
         if cb is not None:
             try:
