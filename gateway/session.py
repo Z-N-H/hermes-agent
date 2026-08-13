@@ -2457,8 +2457,26 @@ class SessionStore:
                     source,
                     display_name=entry.display_name,
                 )
-            except Exception as e:
-                print(f"[gateway] Warning: Failed to create SQLite session: {e}")
+            except Exception:
+                # The in-memory routing entry above is already published, so
+                # every future message on this session_key will route to
+                # session_id — but with no matching `sessions` row, the very
+                # first transcript append raises a FOREIGN KEY error and the
+                # turn dies with "session storage could not be written",
+                # repeating on every retry until the row is created by hand.
+                # This used to be a bare print() that never reached
+                # gateway.log, so the failure was invisible to the runbook's
+                # log-grep diagnostics (#session-storage-fk-orphan). Log it
+                # loudly with the traceback so the actual DB error is on
+                # record next to the session_id it orphaned.
+                logger.error(
+                    "Failed to create SQLite session row for %s (session_key=%s) "
+                    "— routing entry is published but the sessions table has "
+                    "no matching row; every future transcript append for this "
+                    "session_key will fail with a FOREIGN KEY error until this "
+                    "row is created manually",
+                    session_id, session_key, exc_info=True,
+                )
 
         return entry
 
