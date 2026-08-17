@@ -1,0 +1,14 @@
+name: herdr_bridge
+version: 1.0.0
+description: "Reports real Hermes lifecycle state (working/idle/blocked) to the enclosing Herdr pane over its unix socket. The stock herdr-agent-state plugin only reports session identity for resume -- it never calls pane.report_agent -- so without this, Herdr falls back to screen-scraping a full-screen prompt_toolkit app and a -Q run that suppresses its own output. Flags `blocked` the instant an approval prompt appears, closing the 300s silent hang-then-deny gap. No-ops entirely outside a Herdr pane."
+author: "znh"
+hooks:
+  - on_session_start
+  - on_session_end
+  - pre_llm_call
+  - pre_tool_call
+  - post_tool_call
+  - pre_approval_request
+  - post_approval_response
+  - subagent_start
+  - subagent_stop

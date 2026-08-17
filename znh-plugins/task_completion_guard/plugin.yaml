@@ -1,0 +1,6 @@
+name: task_completion_guard
+version: 1.0.0
+description: "Blocks write_file/patch calls that would mark an Obsidian Kanban card 'review' or 'done' unless OpenCode already ran successfully earlier in the same session. Prevents Hermes from self-reporting task completion without real delegation."
+author: "znh"
+hooks:
+  - pre_tool_call
