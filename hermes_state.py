@@ -2368,7 +2368,23 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
                 return result
             except sqlite3.OperationalError as exc:
                 err_msg = str(exc).lower()
-                if "locked" in err_msg or "busy" in err_msg:
+                # "unable to open database file" (SQLITE_CANTOPEN) has been
+                # observed intermittently under the nono sandbox alongside
+                # genuine lock contention on this same connection, and clears
+                # on its own within seconds — see incident notes for
+                # 2026-08-22. It isn't reproducible under synthetic
+                # concurrent-load testing (thread- or process-level), so the
+                # trigger is still unconfirmed, but retrying it the same way
+                # as "locked"/"busy" is the same defensive pattern already
+                # used for a sibling process transiently holding the file —
+                # and costs nothing when the file truly is inaccessible,
+                # since the deadline below still applies and the enriched
+                # error message still surfaces the real error code.
+                if (
+                    "locked" in err_msg
+                    or "busy" in err_msg
+                    or "unable to open database file" in err_msg
+                ):
                     now = time.monotonic()
                     if now < deadline:
                         elapsed = now - (deadline - patience_s)
@@ -2387,12 +2403,16 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
                         continue
                     # Patience exhausted — say what actually happened so the
                     # surfaced error doesn't read as disk/permission damage.
+                    code_suffix = ""
+                    errorname = getattr(exc, "sqlite_errorname", None)
+                    if errorname:
+                        code_suffix = f" [{errorname}]"
                     raise sqlite3.OperationalError(
                         f"database is locked (another Hermes process held the "
                         f"state.db write lock for over {patience_s:.0f}s — "
                         "likely a long maintenance operation such as VACUUM, "
                         "a large WAL checkpoint, or an older pre-update "
-                        "process; the database itself is healthy)"
+                        f"process; the database itself is healthy){code_suffix}"
                     ) from exc
                 # Non-lock error — propagate.
                 raise
