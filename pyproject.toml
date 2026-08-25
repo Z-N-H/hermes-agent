@@ -392,6 +392,11 @@ markers = [
 # integration tests take way too long to run in the normal CI environments
 addopts = "-m 'not integration'"
 
+[tool.ty.src]
+# Captured personal assets — excluded from ruff for the same reason; ty's
+# exclude key lives under [tool.ty.src].
+exclude = ["znh-plugins", "znh-skills"]
+
 [tool.ty.environment]
 python-version = "3.13"
 
@@ -401,6 +406,16 @@ redundant-cast = "ignore"
 
 [tool.ruff]
 preview = true  # required for PLW1514 (unspecified-encoding) — preview rule
+# Captured personal assets (znh-plugins/, znh-skills/) are snapshots of
+# live-but-untracked user code — their own conventions, by design (see their
+# READMEs). Linting/formatting them produces churn without changing anything
+# upstream cares about, exactly like skills//optional-skills//plugins/ below.
+extend-exclude = ["znh-plugins", "znh-skills"]
+# The Pantheon quality gate passes znh-plugins//znh-skills/ explicitly as
+# format targets (project registry format_paths); without force-exclude an
+# explicitly-passed path bypasses extend-exclude and the gate would reformat
+# the captured snapshots on every run.
+force-exclude = true
 
 [tool.ruff.lint]
 # All other lints are intentionally disabled (see comment history on this
@@ -419,3 +434,5 @@ select = ["PLW1514"]
 "skills/**" = ["PLW1514"]
 "optional-skills/**" = ["PLW1514"]
 "plugins/**" = ["PLW1514"]
+"znh-skills/**" = ["PLW1514"]
+"znh-plugins/**" = ["PLW1514"]
