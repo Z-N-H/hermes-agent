@@ -52,8 +52,14 @@ HERDR_BIN = os.environ.get("HERDR_BIN", "/home/znh/.local/bin/herdr")
 HERDR_POLL_SECONDS = 1
 
 _PROJECT_MARKERS = (
-    ".git", "package.json", "pyproject.toml", "Cargo.toml",
-    "go.mod", "opencode.json", "tsconfig.json", "Makefile",
+    ".git",
+    "package.json",
+    "pyproject.toml",
+    "Cargo.toml",
+    "go.mod",
+    "opencode.json",
+    "tsconfig.json",
+    "Makefile",
 )
 
 OPENCODE_DELEGATE_SCHEMA = {
@@ -211,8 +217,7 @@ def _next_child_name(prefix: str, kind: str) -> str:
     taken = {
         str(a.get("name"))
         for a in (
-            (_herdr("agent", "list")[1] or {}).get("result", {}).get("agents")
-            or []
+            (_herdr("agent", "list")[1] or {}).get("result", {}).get("agents") or []
         )
         if isinstance(a, dict) and a.get("name")
     }
@@ -247,8 +252,14 @@ def _run_in_pane(
 
         parent_pane = os.environ.get("HERDR_PANE_ID", "").strip()
         ok, split = _herdr(
-            "pane", "split", parent_pane,
-            "--direction", "down", "--no-focus", "--cwd", str(wd),
+            "pane",
+            "split",
+            parent_pane,
+            "--direction",
+            "down",
+            "--no-focus",
+            "--cwd",
+            str(wd),
         )
         if not ok or split is None:
             return None, "", "", "herdr pane split failed"
@@ -269,9 +280,9 @@ def _run_in_pane(
             f" --source opencode-worker --agent {shlex.quote(name)}"
             f" --state idle --seq $(date +%s%N)"
             "; if [ \"$_rc\" = 0 ]; then _lbl='done=✓ exit 0';"
-            " else _lbl=\"done=exit $_rc\"; fi"
+            ' else _lbl="done=exit $_rc"; fi'
             f"; {shlex.quote(HERDR_BIN)} pane report-metadata {pane_id}"
-            f" --source opencode-worker --state-label \"$_lbl\""
+            f' --source opencode-worker --state-label "$_lbl"'
             f" --seq $(date +%s%N)"
         )
         ok, _ = _herdr("pane", "run", pane_id, line)
@@ -283,13 +294,31 @@ def _run_in_pane(
         # which a rename alone does not create (a rename into an empty pane
         # is a silent no-op — verified live).
         seq = str(time.time_ns())
-        _herdr("pane", "report-agent", pane_id,
-               "--source", "opencode-worker", "--agent", name,
-               "--state", "working", "--seq", seq)
+        _herdr(
+            "pane",
+            "report-agent",
+            pane_id,
+            "--source",
+            "opencode-worker",
+            "--agent",
+            name,
+            "--state",
+            "working",
+            "--seq",
+            seq,
+        )
         _herdr("agent", "rename", pane_id, name)
-        _herdr("pane", "report-metadata", pane_id,
-               "--source", "opencode-worker",
-               "--display-agent", f"↳ {label[:40]}", "--seq", seq)
+        _herdr(
+            "pane",
+            "report-metadata",
+            pane_id,
+            "--source",
+            "opencode-worker",
+            "--display-agent",
+            f"↳ {label[:40]}",
+            "--seq",
+            seq,
+        )
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -351,8 +380,9 @@ def _handle_opencode_delegate(args: dict, **_: Any) -> str:
         label = f"delegate:{task[:40]}"
         rc, stdout, stderr, failure = _run_in_pane(cmd, wd, timeout, label)
         if failure:
-            return tool_error(failure, workdir=str(wd), stdout=stdout.strip(),
-                              stderr=stderr.strip())
+            return tool_error(
+                failure, workdir=str(wd), stdout=stdout.strip(), stderr=stderr.strip()
+            )
     else:
         env = os.environ.copy()
         env.setdefault(
@@ -378,13 +408,11 @@ def _handle_opencode_delegate(args: dict, **_: Any) -> str:
             stderr=stderr.strip(),
         )
 
-    return tool_result(
-        {
-            "workdir": str(wd),
-            "output": stdout.strip(),
-            "stderr": stderr.strip(),
-        }
-    )
+    return tool_result({
+        "workdir": str(wd),
+        "output": stdout.strip(),
+        "stderr": stderr.strip(),
+    })
 
 
 def _check_opencode_available() -> bool:

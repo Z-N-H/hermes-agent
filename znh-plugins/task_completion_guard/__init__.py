@@ -48,7 +48,9 @@ from typing import Any
 from hermes_constants import get_hermes_home
 
 CARD_PATH_RE = re.compile(r"TaskNotes/Tasks/[^/]+\.md$")
-STATUS_GATED_RE = re.compile(r"status:\s*[\"']?(ready-for-review|done)[\"']?", re.IGNORECASE)
+STATUS_GATED_RE = re.compile(
+    r"status:\s*[\"']?(ready-for-review|done)[\"']?", re.IGNORECASE
+)
 OPENCODE_RUN_RE = re.compile(r"\bopencode\s+run\b")
 COMPLETION_NOTICE_RE = re.compile(
     r"Background process (\S+) completed \(exit code (-?\d+)\)"
@@ -56,15 +58,38 @@ COMPLETION_NOTICE_RE = re.compile(
 TITLE_RE = re.compile(r'^title:\s*"?(.*?)"?\s*$', re.MULTILINE)
 CD_PREFIX_RE = re.compile(r"^\s*cd\s+(\S+)\s*&&")
 _KEYWORD_STOPWORDS = {
-    "this", "that", "with", "from", "into", "wire", "fix", "the", "and",
-    "for", "add", "update", "remove", "build", "implement", "create",
-    "using", "make", "task", "work", "card",
+    "this",
+    "that",
+    "with",
+    "from",
+    "into",
+    "wire",
+    "fix",
+    "the",
+    "and",
+    "for",
+    "add",
+    "update",
+    "remove",
+    "build",
+    "implement",
+    "create",
+    "using",
+    "make",
+    "task",
+    "work",
+    "card",
     # Domain words that appear in nearly every dispatch in this environment
     # (everything here touches the vault/pantheon/hermes/opencode stack) --
     # near-zero discriminative signal for telling one card's work apart from
     # another's, confirmed empirically: "obsidian" alone falsely correlated
     # two unrelated dispatches to an unrelated card in the same session.
-    "obsidian", "vault", "pantheon", "hermes", "opencode", "agent",
+    "obsidian",
+    "vault",
+    "pantheon",
+    "hermes",
+    "opencode",
+    "agent",
 }
 
 _POINTER = (
@@ -139,15 +164,28 @@ def _changed_paths_in_workdir(workdir: str, since_ts: float) -> "list[str] | Non
     try:
         toplevel = subprocess.run(
             ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if toplevel.returncode != 0:
             return None
         paths: list[str] = []
         status = subprocess.run(
-            ["git", "-c", "core.quotePath=false", "-C", str(path),
-             "status", "--porcelain", "--", "."],
-            capture_output=True, text=True, timeout=10,
+            [
+                "git",
+                "-c",
+                "core.quotePath=false",
+                "-C",
+                str(path),
+                "status",
+                "--porcelain",
+                "--",
+                ".",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if status.returncode == 0:
             for line in status.stdout.splitlines():
@@ -158,10 +196,23 @@ def _changed_paths_in_workdir(workdir: str, since_ts: float) -> "list[str] | Non
             "%Y-%m-%dT%H:%M:%S+0000", time.gmtime(since_ts + _CHANGE_WINDOW_SECONDS)
         )
         log = subprocess.run(
-            ["git", "-c", "core.quotePath=false", "-C", str(path), "log",
-             f"--since={since_iso}", f"--until={until_iso}", "--name-only",
-             "--format=", "--", "."],
-            capture_output=True, text=True, timeout=10,
+            [
+                "git",
+                "-c",
+                "core.quotePath=false",
+                "-C",
+                str(path),
+                "log",
+                f"--since={since_iso}",
+                f"--until={until_iso}",
+                "--name-only",
+                "--format=",
+                "--",
+                ".",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if log.returncode == 0:
             paths.extend(p for p in log.stdout.splitlines() if p.strip())
@@ -193,7 +244,8 @@ def _workdir_has_relevant_changes(
         return True
     card_name = Path(card_path).name.lower() if card_path else ""
     candidates = [
-        p for p in paths
+        p
+        for p in paths
         if Path(p.strip('"')).name.lower() not in _NOISE_FILENAMES
         and Path(p.strip('"')).name.lower() != card_name
     ]
@@ -255,7 +307,9 @@ def _verify_opencode_delegation(session_id: str, card_path: str = "") -> str:
             (session_id,),
         )
         card_words = _card_keywords(card_path) if card_path else set()
-        dispatches: list[tuple[str, str, str, str]] = []  # (call_id, kind, workdir, task_text)
+        dispatches: list[
+            tuple[str, str, str, str]
+        ] = []  # (call_id, kind, workdir, task_text)
         for (tool_calls_json,) in cur.fetchall():
             try:
                 calls = json.loads(tool_calls_json)
@@ -275,7 +329,12 @@ def _verify_opencode_delegation(session_id: str, card_path: str = "") -> str:
                         call_args = {}
                     workdir = str(call_args.get("workdir") or "")
                     task_text = str(call_args.get("task") or "")
-                    dispatches.append((call_id, "opencode_delegate", workdir, task_text))
+                    dispatches.append((
+                        call_id,
+                        "opencode_delegate",
+                        workdir,
+                        task_text,
+                    ))
                 elif name == "terminal" and OPENCODE_RUN_RE.search(arguments_raw):
                     try:
                         call_args = json.loads(arguments_raw)
@@ -356,9 +415,13 @@ def _verify_opencode_delegation(session_id: str, card_path: str = "") -> str:
 
             if not exit_ok:
                 continue
-            if _workdir_has_relevant_changes(wd, since_ts, card_words, card_path=card_path):
+            if _workdir_has_relevant_changes(
+                wd, since_ts, card_words, card_path=card_path
+            ):
                 return "verified"
-            saw_dispatch_without_confirmed_completion = False  # confirmed-but-empty, more specific
+            saw_dispatch_without_confirmed_completion = (
+                False  # confirmed-but-empty, more specific
+            )
 
         if not any_matched_card:
             return "not_invoked"
@@ -380,7 +443,9 @@ def on_pre_tool_call(
     """Block a Kanban 'ready-for-review'/'done' write with no confirmed, evidenced OpenCode delegation."""
     if not _targets_gated_card(tool_name, args):
         return None
-    verdict = _verify_opencode_delegation(session_id, card_path=str(args.get("path") or ""))
+    verdict = _verify_opencode_delegation(
+        session_id, card_path=str(args.get("path") or "")
+    )
     if verdict == "verified":
         return None
     return {"action": "block", "message": BLOCK_MESSAGES[verdict]}

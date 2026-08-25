@@ -1147,6 +1147,64 @@ class TestBuildSafeEnv:
         assert "GITHUB_TOKEN" not in result
         assert "OPENAI_API_KEY" not in result
 
+    def test_sandbox_proxy_env_passed_when_sentinel_set(self):
+        """Inside an egress-proxy sandbox, proxy-control env must reach MCP stdio."""
+        from tools.mcp_tool import _build_safe_env
+
+        container_ca = "/etc/ssl/certs/hermes-egress-ca.crt"
+        fake_env = {
+            "PATH": "/usr/bin",
+            "HERMES_EGRESS_PROXY": "1",
+            "HTTPS_PROXY": "http://host.docker.internal:9090",
+            "https_proxy": "http://host.docker.internal:9090",
+            "HTTP_PROXY": "http://host.docker.internal:9091",
+            "http_proxy": "http://host.docker.internal:9091",
+            "NO_PROXY": "127.0.0.1,localhost,::1",
+            "no_proxy": "127.0.0.1,localhost,::1",
+            "REQUESTS_CA_BUNDLE": container_ca,
+            "SSL_CERT_FILE": container_ca,
+            "CURL_CA_BUNDLE": container_ca,
+            "NODE_EXTRA_CA_CERTS": container_ca,
+            "NODE_OPTIONS": "--use-openssl-ca",
+            # Credential-shaped values stay filtered even inside the sandbox.
+            "OPENAI_API_KEY": "hermes-proxy-openai-abc123",
+            "HERMES_PROXY_TOKEN_OPENAI_API_KEY": "hermes-proxy-openai-abc123",
+        }
+        with patch.dict("os.environ", fake_env, clear=True):
+            result = _build_safe_env(None)
+
+        for key in (
+            "HERMES_EGRESS_PROXY",
+            "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy",
+            "NO_PROXY", "no_proxy",
+            "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "CURL_CA_BUNDLE",
+            "NODE_EXTRA_CA_CERTS", "NODE_OPTIONS",
+        ):
+            assert result[key] == fake_env[key], f"missing sandbox proxy var: {key}"
+        assert "OPENAI_API_KEY" not in result
+        assert "HERMES_PROXY_TOKEN_OPENAI_API_KEY" not in result
+
+    def test_proxy_env_excluded_when_sentinel_absent(self):
+        """Ambient user-set proxy vars stay filtered without the sandbox sentinel."""
+        from tools.mcp_tool import _build_safe_env
+
+        fake_env = {
+            "PATH": "/usr/bin",
+            "HTTPS_PROXY": "http://corporate-proxy:3128",
+            "http_proxy": "http://corporate-proxy:3128",
+            "NO_PROXY": "localhost",
+            "SSL_CERT_FILE": "/etc/pki/custom.crt",
+            "NODE_EXTRA_CA_CERTS": "/home/user/ca.crt",
+        }
+        with patch.dict("os.environ", fake_env, clear=True):
+            result = _build_safe_env(None)
+
+        for key in (
+            "HTTPS_PROXY", "http_proxy", "NO_PROXY",
+            "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
+        ):
+            assert key not in result, f"proxy var leaked without sentinel: {key}"
+
 
 # ---------------------------------------------------------------------------
 # _sanitize_error

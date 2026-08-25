@@ -40,8 +40,10 @@ def _make_bridge(monkeypatch, agent_name: str = ""):
     spec.loader.exec_module(mod)
     sent: list = []
     monkeypatch.setattr(
-        mod, "_send",
-        lambda method, params, **kw: sent.append((method, dict(params), kw)))
+        mod,
+        "_send",
+        lambda method, params, **kw: sent.append((method, dict(params), kw)),
+    )
     monkeypatch.setitem(sys.modules, "herdr_bridge", mod)
     return mod, sent
 
@@ -56,8 +58,9 @@ def _last_agent(sent: list) -> dict:
 
 def test_file_tool_surfaces_name_and_basename(bridge):
     mod, sent = bridge
-    mod.pre_tool_call(tool_name="patch",
-                      args={"path": "/deep/vault_kanban_dispatch.py"})
+    mod.pre_tool_call(
+        tool_name="patch", args={"path": "/deep/vault_kanban_dispatch.py"}
+    )
     agent = _last_agent(sent)
     assert agent["state"] == "working"
     assert agent["message"] == "Edit vault_kanban_dispatch.py"
@@ -69,8 +72,7 @@ def test_file_tool_surfaces_name_and_basename(bridge):
 
 def test_terminal_tool_surfaces_the_command(bridge):
     mod, sent = bridge
-    mod.pre_tool_call(tool_name="terminal",
-                      args={"command": "uv run pytest tests/"})
+    mod.pre_tool_call(tool_name="terminal", args={"command": "uv run pytest tests/"})
     assert _last_metadata(sent)["state_labels"] == {
         "working": "Run uv run pytest tests/"
     }
@@ -79,16 +81,13 @@ def test_terminal_tool_surfaces_the_command(bridge):
 def test_unknown_tool_falls_back_to_its_name(bridge):
     mod, sent = bridge
     mod.pre_tool_call(tool_name="web_search", args={"query": "herdr ttl"})
-    assert _last_metadata(sent)["state_labels"] == {
-        "working": "web_search"
-    }
+    assert _last_metadata(sent)["state_labels"] == {"working": "web_search"}
 
 
 def test_label_reverts_on_post_tool_call(bridge):
     mod, sent = bridge
     mod.pre_tool_call(tool_name="read_file", args={"path": "a.py"})
-    mod.post_tool_call(tool_name="read_file", args={"path": "a.py"},
-                       status="ok")
+    mod.post_tool_call(tool_name="read_file", args={"path": "a.py"}, status="ok")
     meta = _last_metadata(sent)
     assert meta["clear_state_labels"] is True
     assert _last_agent(sent) == {"state": "working"}  # still mid-turn
@@ -161,13 +160,11 @@ def test_subagent_gets_a_split_pane_on_the_scheme(monkeypatch):
     mod, sent, cli_calls = _scheme_bridge(monkeypatch)
     mod.subagent_start(child_session_id="c1", name="copy-writer")
 
-    assert ("pane", "split", "w1:p2", "--direction", "down",
-            "--no-focus") in cli_calls
+    assert ("pane", "split", "w1:p2", "--direction", "down", "--no-focus") in cli_calls
     rename = next(c for c in cli_calls if c[:2] == ("agent", "rename"))
     assert rename[3] == "cg6w3sa6f-hermes-01"
     # The child reports working onto ITS OWN pane with ITS OWN name...
-    child_agent = next(p for m, p, kw in sent
-                       if m == "pane.report_agent")
+    child_agent = next(p for m, p, kw in sent if m == "pane.report_agent")
     assert child_agent["state"] == "working"
     child_kw = next(kw for m, _, kw in sent if m == "pane.report_agent")
     assert child_kw["pane_id"].startswith("w1:p1")
@@ -176,8 +173,11 @@ def test_subagent_gets_a_split_pane_on_the_scheme(monkeypatch):
     assert mod._subagents == {}
 
     mod.subagent_stop(child_session_id="c1")
-    stops = [(p, kw) for m, p, kw in sent if m == "pane.report_agent"
-             and p.get("state") == "idle"]
+    stops = [
+        (p, kw)
+        for m, p, kw in sent
+        if m == "pane.report_agent" and p.get("state") == "idle"
+    ]
     assert stops and stops[-1][1]["agent"] == "cg6w3sa6f-hermes-01"
 
 
@@ -194,8 +194,7 @@ def test_subagent_folds_when_off_the_scheme(monkeypatch):
     mod, sent = _make_bridge(monkeypatch)  # no HERDR_AGENT_NAME
     monkeypatch.setattr(mod, "_target", lambda: ("w1:p2", "/sock"))
     cli_calls: list = []
-    monkeypatch.setattr(mod, "_cli",
-                        lambda *a: cli_calls.append(a) or {"ok": True})
+    monkeypatch.setattr(mod, "_cli", lambda *a: cli_calls.append(a) or {"ok": True})
     mod.subagent_start(child_session_id="c1", name="writer")
     assert cli_calls == []
     assert mod._subagents == {"c1": "writer"}
@@ -216,7 +215,10 @@ def test_session_end_flips_leftover_child_panes(monkeypatch):
     mod.subagent_start(child_session_id="c1", name="orphan")
     sent.clear()
     mod.on_session_end()
-    idle = [(p, kw) for m, p, kw in sent if m == "pane.report_agent"
-            and p.get("state") == "idle"]
+    idle = [
+        (p, kw)
+        for m, p, kw in sent
+        if m == "pane.report_agent" and p.get("state") == "idle"
+    ]
     assert idle and idle[0][1]["agent"] == "cg6w3sa6f-hermes-01"
     assert mod._child_panes == {}

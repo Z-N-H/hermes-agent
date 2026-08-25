@@ -373,6 +373,28 @@ _SAFE_ENV_KEYS = frozenset({
     "PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR",
 })
 
+# Proxy-control env vars that Hermes' egress proxy (iron-proxy) injects into
+# Docker sandboxes (see tools/environments/docker.py
+# ``_egress_proxy_args_for_docker``).  When Hermes itself runs inside such a
+# sandbox, stdio MCP subprocesses it spawns must inherit this plumbing so
+# their outbound traffic routes through the same egress firewall and trusts
+# its MITM CA — otherwise (a) direct connections can't authenticate through
+# the proxy's credential-injection boundary, and (b) with enforced egress,
+# every MCP server connection fails TLS validation or has no route out.
+#
+# These are *control* vars only.  The sandbox also holds opaque proxy tokens
+# under standard provider env names; those stay credential-shaped and are
+# deliberately NOT in this list — an MCP server that needs a provider
+# credential still declares it via its ``env:`` config block.
+_SANDBOX_PROXY_ENV_KEYS = frozenset({
+    "HTTPS_PROXY", "https_proxy",
+    "HTTP_PROXY", "http_proxy",
+    "NO_PROXY", "no_proxy",
+    "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "CURL_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS", "NODE_OPTIONS",
+    "HERMES_EGRESS_PROXY",
+})
+
 _SAFE_ENV_KEYS_CASE_INSENSITIVE = frozenset({
     # Windows process/location vars. These are needed by launcher-style tools
     # such as Docker Desktop's MCP plugin discovery, and do not carry secrets.
@@ -443,6 +465,20 @@ def _env_ref_name(ref: str) -> str:
 # Security helpers
 # ---------------------------------------------------------------------------
 
+def _sandbox_proxy_active() -> bool:
+    """True when the egress-proxy sentinel marks this process as sandboxed.
+
+    ``tools/environments/docker.py`` sets ``HERMES_EGRESS_PROXY=1`` on the
+    container environment alongside the ``*_PROXY`` / CA-bundle plumbing.
+    The sentinel is what distinguishes sandbox-injected proxy env (safe —
+    written by Hermes itself) from ambient user-set proxy vars, which stay
+    filtered like any other non-baseline variable.
+    """
+    return os.environ.get("HERMES_EGRESS_PROXY", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def _build_safe_env(user_env: Optional[dict]) -> dict:
     """Build a filtered environment dict for stdio subprocesses.
 
@@ -451,6 +487,13 @@ def _build_safe_env(user_env: Optional[dict]) -> dict:
     external secret source (Bitwarden, 1Password, plugin backends) that
     Hermes explicitly tagged during dotenv loading, plus any variables
     explicitly specified by the user in the server config.
+
+    When Hermes itself runs inside an egress-proxy sandbox (the
+    ``HERMES_EGRESS_PROXY`` sentinel is set), the sandbox's proxy-control
+    vars (``_SANDBOX_PROXY_ENV_KEYS``) also pass through so MCP subprocess
+    traffic routes through the same egress firewall.  Credential-shaped
+    sandbox vars (opaque proxy tokens under provider env names) stay
+    filtered — they are never part of ``_SANDBOX_PROXY_ENV_KEYS``.
 
     This prevents accidentally leaking secrets like API keys, tokens, or
     credentials to MCP server subprocesses.  Secret-source-injected vars are
@@ -462,6 +505,7 @@ def _build_safe_env(user_env: Optional[dict]) -> dict:
         from hermes_cli.env_loader import get_secret_source
     except Exception:  # pragma: no cover — early bootstrap/import fallback
         get_secret_source = None
+    include_proxy = _sandbox_proxy_active()
     env = {}
     for key, value in os.environ.items():
         if (
@@ -469,6 +513,7 @@ def _build_safe_env(user_env: Optional[dict]) -> dict:
             or key.upper() in _SAFE_ENV_KEYS_CASE_INSENSITIVE
             or key.startswith("XDG_")
             or (get_secret_source is not None and get_secret_source(key))
+            or (include_proxy and key in _SANDBOX_PROXY_ENV_KEYS)
         ):
             env[key] = value
     if user_env:

@@ -600,6 +600,16 @@ PATH, HOME, USER, LANG, LC_ALL, TERM, SHELL, TMPDIR
 
 Plus any `XDG_*` variables. All other environment variables (API keys, tokens, secrets) are **stripped**.
 
+**Egress-proxy sandboxes:** when Hermes itself runs inside a Docker sandbox enforced by the [iron-proxy egress firewall](/user-guide/egress/iron-proxy) (the `HERMES_EGRESS_PROXY=1` sentinel is set), the sandbox's proxy-control variables additionally pass through to MCP stdio subprocesses so their traffic routes through the same firewall:
+
+```
+HTTPS_PROXY/https_proxy, HTTP_PROXY/http_proxy, NO_PROXY/no_proxy,
+REQUESTS_CA_BUNDLE, SSL_CERT_FILE, CURL_CA_BUNDLE,
+NODE_EXTRA_CA_CERTS, NODE_OPTIONS, HERMES_EGRESS_PROXY
+```
+
+These are connection plumbing only. The sandbox's opaque proxy tokens (held under standard provider env names like `OPENAI_API_KEY`) remain **stripped** from MCP subprocesses — an MCP server that needs a provider credential still declares it in its `env` block. Ambient proxy variables set in your shell on a normal host (no sentinel) are not passed through either.
+
 Variables explicitly defined in the MCP server's `env` config are passed through:
 
 ```yaml
