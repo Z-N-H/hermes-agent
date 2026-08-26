@@ -885,6 +885,15 @@ _SOCKET_CLIENT_TASK_ATTRS = (
 # call must not be able to hold up shutdown indefinitely.
 _SOCKET_TASK_CANCEL_TIMEOUT_S = 3.0
 
+# Bounds for the snapshot-cancel settle loop in _stop_socket_mode_handler: how
+# many passes to take re-snapshotting the client's task attributes, and how
+# long to yield between passes so a task mid-reconnect has a chance to either
+# finish cancelling or rebind the attribute to its replacement (which the next
+# pass then catches). Worst case wall-clock is bounded by
+# passes * (cancel timeout + delay).
+_SOCKET_TASK_SETTLE_PASSES = 3
+_SOCKET_TASK_SETTLE_DELAY_S = 0.05
+
 
 async def _cancel_socket_tasks(tasks: Any) -> None:
     """Cancel Socket Mode tasks and wait, with a bound, for them to finish.
@@ -1430,9 +1439,17 @@ class SlackAdapter(BasePlatformAdapter):
         first. ``monitor_current_session()`` and ``receive_messages()`` each get
         there on their own, and ``connect()`` rebinds the client's task
         attributes on success, so the set of live tasks changes across the
-        awaits inside ``close()``. Cancelling from a snapshot taken partway
-        through that would race a moving target. See
-        slackapi/python-slack-sdk#1913.
+        awaits inside ``close()``. A single snapshot-and-cancel pass can miss a
+        task that ``connect()`` spins up mid-teardown to replace the one just
+        cancelled: the replacement is invisible to a snapshot taken before it
+        existed, survives cancellation, and then retries forever against the
+        session ``close()`` is about to tear out from under it. See
+        slackapi/python-slack-sdk#1913 — confirmed live on 2026-08-22 as a
+        10+ hour orphaned "Session is closed" retry loop that the Socket Mode
+        watchdog couldn't see because it only ever inspects the *current*
+        handler's client, not orphans detached from it. Settle in a bounded
+        loop, re-snapshotting after each cancel pass, instead of trusting one
+        snapshot to be complete.
         """
         handler = self._handler
         task = self._socket_mode_task
@@ -1440,9 +1457,25 @@ class SlackAdapter(BasePlatformAdapter):
         self._socket_mode_task = None
 
         client = getattr(handler, "client", None)
-        await _cancel_socket_tasks(
-            [task] + [getattr(client, attr, None) for attr in _SOCKET_CLIENT_TASK_ATTRS]
-        )
+        already_cancelled: set = set()
+        first_pass_extra = [task]
+        for _ in range(_SOCKET_TASK_SETTLE_PASSES):
+            current = [
+                t
+                for t in first_pass_extra
+                + [getattr(client, attr, None) for attr in _SOCKET_CLIENT_TASK_ATTRS]
+                if t is not None
+            ]
+            first_pass_extra = []  # the main task never gets rebound; only seed it once
+            new_tasks = [t for t in current if t not in already_cancelled]
+            if not new_tasks:
+                break
+            await _cancel_socket_tasks(new_tasks)
+            already_cancelled.update(new_tasks)
+            # Give a task that was mid-reconnect a beat to either finish
+            # cancelling or rebind the client's attribute to its replacement,
+            # so the next pass's snapshot can catch that replacement too.
+            await asyncio.sleep(_SOCKET_TASK_SETTLE_DELAY_S)
 
         if handler is not None:
             try:

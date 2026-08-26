@@ -1,0 +1,6 @@
+name: process_completion_log
+version: 1.0.0
+description: "Durably logs every background process's outcome (session_id, command, cwd, exit_code, output) to ~/.hermes/process-completions.jsonl the instant it completes -- independent of whether the model ever reads or acts on the conversational notify_on_complete ping. Closes the 'output evaporated' gap where real OpenCode results were lost."
+author: "znh"
+hooks:
+  - on_process_complete

@@ -4227,6 +4227,7 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
                     try:
                         agent.stream_delta_callback(delta_content)
                         agent._record_streamed_assistant_text(delta_content)
+                        agent._record_tps_token(delta_content)
                     except Exception:
                         pass
 
@@ -4289,6 +4290,7 @@ def interruptible_streaming_api_call(agent, api_kwargs: dict, *, on_first_delta=
                         function_arguments = getattr(tc_function, "arguments", None)
                         if function_arguments:
                             entry["function"]["arguments"] += function_arguments
+                            agent._record_tps_token(function_arguments)
                     extra = getattr(tc_delta, "extra_content", None)
                     if extra is None and hasattr(tc_delta, "model_extra"):
                         extra = (tc_delta.model_extra if isinstance(tc_delta.model_extra, dict) else {}).get("extra_content")

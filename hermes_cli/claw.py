@@ -346,6 +346,11 @@ def _cmd_migrate(args):
     # importing API keys that the user may not have intended to copy.
 
     print()
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
     print(
         color(
             "┌─────────────────────────────────────────────────────────┐",
@@ -354,7 +359,7 @@ def _cmd_migrate(args):
     )
     print(
         color(
-            "│          ⚕ Hermes — OpenClaw Migration                 │",
+            f"│          {_icon} Hermes — OpenClaw Migration                 │",
             Colors.MAGENTA,
         )
     )
@@ -572,6 +577,11 @@ def _cmd_cleanup(args):
     explicit_source = getattr(args, "source", None)
 
     print()
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
     print(
         color(
             "┌─────────────────────────────────────────────────────────┐",
@@ -580,7 +590,7 @@ def _cmd_cleanup(args):
     )
     print(
         color(
-            "│          ⚕ Hermes — OpenClaw Cleanup                   │",
+            f"│          {_icon} Hermes — OpenClaw Cleanup                   │",
             Colors.MAGENTA,
         )
     )

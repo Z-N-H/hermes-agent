@@ -1979,6 +1979,23 @@ def init_agent(
     from agent.memory_manager import inject_memory_provider_tools as _inject_memory_provider_tools
     _inject_memory_provider_tools(agent)
 
+    # The built-in `memory` tool (tools/memory_tool.py) is registered globally
+    # with check_memory_requirements() always returning True, so it is not
+    # excluded by the normal toolset-availability gate. When memory_enabled
+    # and user_profile_enabled are both off (e.g. an external provider like
+    # Hindsight is the sole memory system), drop it here so the model never
+    # sees a tool that would only fail at call time with "Memory is not
+    # available" — and so it can't out-compete the external provider's own
+    # tools for the model's attention.
+    if not agent._memory_enabled and not agent._user_profile_enabled:
+        agent.tools = [
+            t for t in agent.tools
+            if not (isinstance(t, dict) and t.get("function", {}).get("name") == "memory")
+        ]
+        _valid_tool_names = getattr(agent, "valid_tool_names", None)
+        if _valid_tool_names is not None:
+            _valid_tool_names.discard("memory")
+
     # Skills config: nudge interval for skill creation reminders
     agent._skill_nudge_interval = 10
     try:
@@ -2952,6 +2969,12 @@ def init_agent(
     agent._user_turn_count = 0
     # Copilot x-initiator flag: first API call of a user turn sends "user" (#3040).
     agent._is_user_initiated_turn = False
+
+    # TPS (tokens per second) tracking — mirrors reset_session_state() initialisation
+    agent._tps_token_count = 0
+    agent._tps_window_start = time.time()
+    agent._current_tps = 0.0
+    agent._last_tps_update = 0.0
 
     # Cumulative token usage for the session
     agent.session_prompt_tokens = 0

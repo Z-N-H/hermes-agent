@@ -2067,6 +2067,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Resolve Hermes home directory (respects HERMES_HOME override)
 from hermes_constants import get_hermes_home, get_hermes_home_override
 from utils import atomic_json_write, base_url_hostname, is_truthy_value
+from hermes_icons import ICON_GEAR
 _hermes_home = get_hermes_home()
 
 # Load environment variables from ~/.hermes/.env first.
@@ -4441,7 +4442,7 @@ class TurnRunner:
 
         # Build progress message with primary argument preview
         from agent.display import get_tool_emoji
-        emoji = get_tool_emoji(tool_name, default="⚙️")
+        emoji = get_tool_emoji(tool_name, default=ICON_GEAR)
 
         # Markdown-capable platforms render a terminal command as a fenced
         # code block instead of the compact `terminal: "cmd…"` preview.

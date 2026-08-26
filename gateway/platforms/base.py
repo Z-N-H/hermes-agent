@@ -24,6 +24,7 @@ from abc import ABC, abstractmethod
 from urllib.parse import urlsplit
 
 from utils import normalize_proxy_url
+from hermes_icons import ICON_GEAR
 
 logger = logging.getLogger(__name__)
 
@@ -3446,7 +3447,7 @@ class BasePlatformAdapter(ABC):
             return None
 
         from agent.display import get_tool_emoji
-        emoji = get_tool_emoji(event.tool_name, default="⚙️")
+        emoji = get_tool_emoji(event.tool_name, default=ICON_GEAR)
 
         if mode == "verbose":
             if event.args:

@@ -3510,6 +3510,12 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
             print("✓ Already up to date.")
         else:
             from hermes_cli.banner import _github_compare_behind
+
+            try:
+                from hermes_cli.skin_engine import get_active_brand_icon
+                _icon = get_active_brand_icon()
+            except Exception:
+                _icon = "⚕"
             from hermes_cli.config import recommended_update_command
 
             counted = _github_compare_behind(head_sha, target_sha)
@@ -3519,9 +3525,9 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
                 return
             if counted is not None:
                 commits_word = "commit" if counted == 1 else "commits"
-                print(f"⚕ Update available: {counted} {commits_word} behind {compare_branch}.")
+                print(f"{_icon} Update available: {counted} {commits_word} behind {compare_branch}.")
             else:
-                print(f"⚕ Update available (behind {compare_branch}).")
+                print(f"{_icon} Update available (behind {compare_branch}).")
             print(f"  Run '{recommended_update_command()}' to install.")
         return
 
@@ -3538,7 +3544,12 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
         print("✓ Already up to date.")
     else:
         commits_word = "commit" if behind == 1 else "commits"
-        print(f"⚕ Update available: {behind} {commits_word} behind {compare_branch}.")
+        try:
+            from hermes_cli.skin_engine import get_active_brand_icon
+            _icon = get_active_brand_icon()
+        except Exception:
+            _icon = "⚕"
+        print(f"{_icon} Update available: {behind} {commits_word} behind {compare_branch}.")
         from hermes_cli.config import recommended_update_command
 
         print(f"  Run '{recommended_update_command()}' to install.")
@@ -6074,7 +6085,12 @@ def _cmd_update_impl(args, gateway_mode: bool):
             logger.debug("Could not read updates.non_interactive_local_changes: %s", exc)
             discard_local_changes = False
 
-    print("⚕ Updating Hermes Agent...")
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
+    print(f"{_icon} Updating Hermes Agent...")
     print()
 
     # Phase 1 (#91277): structured update receipt — record what this run

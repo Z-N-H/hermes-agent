@@ -831,6 +831,10 @@ class HindsightMemoryProvider(MemoryProvider):
         # Legacy alias — older tests/callers reference _sync_thread directly.
         # Points at _writer_thread once the writer is running.
         self._sync_thread = None
+        # Auto-start the local hindsight-api daemon when a server.env file is
+        # present alongside local_external mode. Populated in initialize().
+        self._auto_start_server = False
+        self._server_env_path = ""
         self._session_id = ""
         self._parent_session_id = ""
         self._document_id = ""
@@ -1289,7 +1293,11 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def _is_retriable_embedded_connection_error(self, exc: Exception) -> bool:
         """Return True for stale embedded-daemon connection failures."""
-        if self._mode != "local_embedded":
+        if self._mode == "local_embedded":
+            pass
+        elif self._mode == "local_external" and self._auto_start_server:
+            pass
+        else:
             return False
         text = f"{type(exc).__name__}: {exc}".lower()
         return any(
@@ -1649,6 +1657,13 @@ class HindsightMemoryProvider(MemoryProvider):
         # "local" is a legacy alias for "local_embedded"
         if self._mode == "local":
             self._mode = "local_embedded"
+        # Auto-start the hindsight-api daemon when a server.env file exists alongside
+        # local_external mode. The server is started lazily in a background thread.
+        if self._mode == "local_external":
+            _server_env = get_hermes_home() / "hindsight" / "server.env"
+            if _server_env.exists():
+                self._auto_start_server = True
+                self._server_env_path = str(_server_env)
         if self._mode == "local_embedded":
             # Export the daemon health grace timeout BEFORE importing
             # daemon_embed_manager (which reads it at import time).
@@ -1837,6 +1852,86 @@ class HindsightMemoryProvider(MemoryProvider):
 
             t = threading.Thread(target=_start_daemon, daemon=True, name="hindsight-daemon-start")
             t.start()
+
+        # For local_external mode with a server.env, start the hindsight-api
+        # server process if it is not already listening on the configured port.
+        if self._mode == "local_external" and self._auto_start_server:
+            self._start_external_server_daemon()
+
+    def _start_external_server_daemon(self) -> None:
+        """Start the local hindsight-api server if not already running.
+
+        Reads configuration from ``$HERMES_HOME/hindsight/server.env`` and
+        starts ``hindsight-api`` as a detached background process so it
+        survives beyond the current session. Skips silently if the server
+        is already accepting connections on the configured port.
+        """
+        import shutil
+        import socket
+        import subprocess
+        from pathlib import Path
+
+        try:
+            port = int(self._api_url.rstrip("/").rsplit(":", 1)[-1])
+        except Exception:
+            port = 8888
+
+        # Quick liveness check — skip startup if already running.
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                logger.debug("Hindsight API server already running on port %d", port)
+                return
+        except Exception:
+            pass
+
+        # Resolve the binary path — prefer shutil.which, then search venv ancestors.
+        binary = shutil.which("hindsight-api")
+        if not binary:
+            for parent in Path(__file__).resolve().parents:
+                for bin_subdir in ("bin", "venv/bin"):
+                    candidate = parent / bin_subdir / "hindsight-api"
+                    if candidate.exists():
+                        binary = str(candidate)
+                        break
+                if binary:
+                    break
+        if not binary:
+            logger.warning(
+                "hindsight-api binary not found; cannot auto-start Hindsight server. "
+                "Check that hindsight-api is installed in the active virtual environment."
+            )
+            return
+
+        env = dict(os.environ)
+        if self._server_env_path and Path(self._server_env_path).exists():
+            for k, v in _load_simple_env(Path(self._server_env_path)).items():
+                env[k] = v
+        # Force unbuffered output so server startup messages appear in the log file.
+        env["PYTHONUNBUFFERED"] = "1"
+
+        log_dir = get_hermes_home() / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "hindsight-server.log"
+
+        def _launch():
+            try:
+                with open(log_path, "a", encoding="utf-8") as logf:
+                    subprocess.Popen(
+                        [binary, "--port", str(port), "--log-level", "warning"],
+                        env=env,
+                        stdout=logf,
+                        stderr=logf,
+                        close_fds=True,
+                        start_new_session=True,  # detach from terminal / Hermes process group
+                    )
+                logger.info(
+                    "Hindsight API server started (port=%d, log=%s)", port, log_path
+                )
+            except Exception as exc:
+                logger.warning("Failed to start hindsight-api server: %s", exc)
+
+        t = threading.Thread(target=_launch, daemon=True, name="hindsight-server-start")
+        t.start()
 
     def system_prompt_block(self) -> str:
         if self._memory_mode == "context":

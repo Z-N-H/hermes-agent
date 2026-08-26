@@ -130,7 +130,12 @@ class CLIBillingMixin:
         # Team context: no personal plan — teams run on a shared balance.
         if state.context == "team":
             print()
-            _cprint(f"  ⚕ {_b('Team subscription')}")
+            try:
+                from hermes_cli.skin_engine import get_active_brand_icon
+                _icon = get_active_brand_icon()
+            except Exception:
+                _icon = "⚕"
+            _cprint(f"  {_icon} {_b('Team subscription')}")
             print(f"  {'─' * 41}")
             if state.org_name:
                 role = (state.role or "").title()
@@ -210,7 +215,12 @@ class CLIBillingMixin:
             _cprint(f"  {_d(f'You keep {_from} (and its credits) until then.')}")
             _cprint("")
 
-        _cprint(f"  ⚕ {_b(status)}")
+        try:
+            from hermes_cli.skin_engine import get_active_brand_icon
+            _icon = get_active_brand_icon()
+        except Exception:
+            _icon = "⚕"
+        _cprint(f"  {_icon} {_b(status)}")
         print(f"  {'─' * 41}")
 
         # Two-bar dollar usage view — plan name labels the plan bar.
@@ -315,7 +325,12 @@ class CLIBillingMixin:
             return
 
         print()
-        _cprint(f"  ⚕ {_b('Choose a plan')}")
+        try:
+            from hermes_cli.skin_engine import get_active_brand_icon
+            _icon = get_active_brand_icon()
+        except Exception:
+            _icon = "⚕"
+        _cprint(f"  {_icon} {_b('Choose a plan')}")
         print(f"  {'─' * 41}")
         for i, t in enumerate(tiers, 1):
             print(f"  {i}. {format_tier_row(t)}")

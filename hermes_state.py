@@ -2493,6 +2493,105 @@ def _backup_db_file(db_path: Path) -> "Tuple[Optional[Path], Optional[str]]":
         return None, f"backup copy failed: {exc}"
 
 
+_SQLITE_TMP_ENV_VARS = ("SQLITE_TMPDIR", "TMPDIR")
+
+
+def ensure_sqlite_tmpdir(anchor_dir: Optional[Path] = None) -> Optional[Path]:
+    """Pin SQLite's scratch/temp-file directory to a sandbox-proof location.
+
+    SQLite resolves its temp directory per connection as (POSIX, in order):
+    ``SQLITE_TMPDIR`` → ``TMPDIR`` → ``/var/tmp`` → ``/usr/tmp`` → ``/tmp``.
+    Under a filesystem sandbox (nono, seatbelt, a container with a read-only
+    ``/var``) the ambient candidates can all be write-denied while the Hermes
+    state tree is explicitly allowed. Any statement that then needs a temp
+    file (spilled sorts / materialized sweeps, large ``IN (...)`` rewrite
+    lists, some VACUUM/rebuild paths) fails with the famous opaque
+    ``unable to open database file`` (SQLITE_CANTOPEN) even though the
+    database file itself is perfectly accessible — the exact failure shape
+    of the 2026-08-22 incident.
+
+    This helper makes the failure unreachable-by-construction:
+
+    - ``SQLITE_TMPDIR`` set to an existing writable dir → honoured untouched.
+    - ``SQLITE_TMPDIR`` set but the dir doesn't exist yet → created in place
+      (the operator's choice wins when the environment can honour it).
+    - ``SQLITE_TMPDIR`` set but unusable (sandbox denies creation / not
+      writable) → overridden with the anchor fallback, with a warning —
+      keeping a dead pointer would guarantee CANTOPEN on the first temp file.
+    - Unset → create ``<anchor_dir>/.sqlite-tmp`` (mode 0700, beside the DB
+      so it sits inside the same writable allowlist as ``state.db`` itself)
+      and export it.
+
+    Best-effort: on any anchor-side failure the environment is left
+    untouched (SQLite's ambient fallbacks may still work) and ``None`` is
+    returned so a caller cannot accidentally assert a dir that does not
+    exist -- truthfulness over optimism, no matter what.
+    """
+    existing = os.environ.get("SQLITE_TMPDIR")
+    if existing:
+        path = Path(existing)
+        try:
+            if path.is_dir() and os.access(path, os.W_OK | os.X_OK):
+                return path
+            # Missing dir: try to honour the operator's choice by creating it.
+            path.mkdir(parents=True, exist_ok=True)
+            if path.is_dir() and os.access(path, os.W_OK | os.X_OK):
+                logger.info(
+                    "SQLITE_TMPDIR=%s did not exist; created it and honouring "
+                    "the operator override.",
+                    path,
+                )
+                return path
+        except OSError:
+            pass
+        if anchor_dir is None:
+            logger.warning(
+                "SQLITE_TMPDIR=%s is unusable and no anchor dir is available "
+                "to fall back to; leaving SQLite's ambient temp-dir resolution "
+                "in place (CANTOPEN possible for temp files under sandboxes).",
+                path,
+            )
+            return None
+        logger.warning(
+            "SQLITE_TMPDIR=%s is unusable (missing and cannot be created, or "
+            "not writable — e.g. denied by a filesystem sandbox); overriding "
+            "with %s/.sqlite-tmp so SQLite temp files land in a guaranteed-"
+            "writable directory.",
+            path,
+            anchor_dir,
+        )
+
+    if anchor_dir is None:
+        return None
+    fallback = anchor_dir / ".sqlite-tmp"
+    try:
+        created = not fallback.exists()
+        fallback.mkdir(parents=True, exist_ok=True)
+        if created:
+            # Temp files can hold raw message bytes — own them strictly.
+            try:
+                os.chmod(fallback, 0o700)
+            except OSError:
+                pass
+        if not (fallback.is_dir() and os.access(fallback, os.W_OK | os.X_OK)):
+            logger.debug(
+                "Anchor temp dir %s unusable; leaving ambient SQLite temp-dir "
+                "resolution in place.",
+                fallback,
+            )
+            return None
+    except OSError as exc:
+        logger.debug(
+            "Could not create anchored SQLite temp dir %s (%s); leaving "
+            "ambient resolution in place.",
+            fallback,
+            exc,
+        )
+        return None
+    os.environ["SQLITE_TMPDIR"] = str(fallback)
+    return fallback
+
+
 def preflight_db_writability(
     db_path: Path,
     *,
@@ -4273,6 +4372,9 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
                 # must already exist + be initialised (callers guard on
                 # db_path.exists()); a SELECT against an empty file raises and
                 # the caller degrades per-profile.
+                # SELECTs can spill to temp files too (ORDER BY over large
+                # inboxes) — pin the scratch dir before the first connection.
+                ensure_sqlite_tmpdir(self.db_path.parent)
                 self._conn = _connect_tracked_db(
                     f"file:{self.db_path}?mode=ro",
                     tracking_path=self.db_path,
@@ -4317,6 +4419,12 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
                 return
 
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Sandbox-proof SQLite's scratch/temp dir BEFORE any connection
+            # opens: a temp-file creation failure inside a sandbox surfaces
+            # as a misleading "unable to open database file" (SQLITE_CANTOPEN)
+            # even though the DB file itself is fine. See ensure_sqlite_tmpdir.
+            ensure_sqlite_tmpdir(self.db_path.parent)
 
             # Read-only file/sidecar preflight (port of kilocode#12508):
             # repair-or-refuse BEFORE the first connection so users get an
@@ -4998,17 +5106,41 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
                 raise
             except sqlite3.OperationalError as exc:
                 err_msg = str(exc).lower()
-                if "locked" in err_msg or "busy" in err_msg:
+                # "unable to open database file" (SQLITE_CANTOPEN) has been
+                # observed intermittently under the nono sandbox alongside
+                # genuine lock contention on this same connection, and clears
+                # on its own within seconds — see incident notes for
+                # 2026-08-22. The trigger is the sandbox denying SQLite's
+                # scratch/temp-file creation (ambient /var/tmp etc. outside
+                # the writable allowlist) — ensure_sqlite_tmpdir pins the
+                # temp dir inside the state tree at open time, and the
+                # transient remains possible while a sibling process
+                # rebinds it. Retry it the same way as "locked"/"busy".
+                is_cantopen = "unable to open database file" in err_msg
+                if "locked" in err_msg or "busy" in err_msg or is_cantopen:
                     if self._sleep_before_write_retry(deadline, patience_s):
                         continue
-                    # Patience exhausted — say what actually happened so the
-                    # surfaced error doesn't read as disk/permission damage.
+                    # Patience exhausted — say what ACTUALLY happened. A
+                    # CANTOPEN is a filesystem-open failure, not lock
+                    # contention: blaming the write lock (and claiming the
+                    # database is healthy) would send operators debugging in
+                    # the wrong place. Keep the two failure classes distinct.
+                    code_suffix = ""
+                    errorname = getattr(exc, "sqlite_errorname", None)
+                    if errorname:
+                        code_suffix = f" [{errorname}]"
+                    if is_cantopen:
+                        raise sqlite3.OperationalError(
+                            self._build_cantopen_exhausted_message(
+                                exc, patience_s, code_suffix
+                            )
+                        ) from exc
                     raise sqlite3.OperationalError(
                         f"database is locked (another Hermes process held the "
                         f"state.db write lock for over {patience_s:.0f}s — "
                         "likely a long maintenance operation such as VACUUM, "
                         "a large WAL checkpoint, or an older pre-update "
-                        "process; the database itself is healthy)"
+                        f"process; the database itself is healthy){code_suffix}"
                     ) from exc
                 if _is_no_more_rows(exc) and self._sleep_before_write_retry(deadline, patience_s):
                     continue
@@ -5250,6 +5382,44 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
             except Exception:
                 pass
         return signalled
+
+    def _build_cantopen_exhausted_message(
+        self,
+        exc: sqlite3.OperationalError,
+        patience_s: float,
+        code_suffix: str,
+    ) -> str:
+        """Truthful exhaustion message for a persistent SQLITE_CANTOPEN.
+
+        Unlike lock contention, "unable to open database file" means SQLite
+        could not open a *file*: the DB itself, a journal/WAL sidecar, or —
+        most often under sandboxed filesystems (nono, seatbelt, containers
+        with a read-only /var) — a scratch/temp file, when the ambient temp
+        directory sits outside the sandbox's writable allowlist. Name every
+        real path involved so the operator can fix the policy instead of
+        hunting a lock convoy that does not exist.
+        """
+        pinned_tmp = os.environ.get("SQLITE_TMPDIR") or os.environ.get("TMPDIR")
+        if pinned_tmp:
+            tmp_desc = f"SQLite temp dir in effect: {pinned_tmp} (from SQLITE_TMPDIR/TMPDIR)"
+        else:
+            tmp_desc = (
+                "SQLite temp dir: ambient fallback (/var/tmp, /usr/tmp, /tmp, "
+                ".) — no SQLITE_TMPDIR pinned"
+            )
+        return (
+            f"unable to open database file (SQLITE_CANTOPEN persisted for "
+            f"over {patience_s:.0f}s — this is NOT lock contention). "
+            f"Database path: {self.db_path}; {tmp_desc}. "
+            "Most likely cause: a filesystem sandbox (e.g. nono) denying "
+            "write access to the state directory or to the directory SQLite "
+            "uses for scratch/temp files — temp-file creation failures "
+            "surface as CANTOPEN even when the database file itself is "
+            "fine. Fix: allow writes to the state directory "
+            f"({self.db_path.parent}) in the sandbox profile and set "
+            "SQLITE_TMPDIR to a directory inside the sandbox's writable "
+            f"allowlist.{code_suffix} Original error: {exc}"
+        )
 
     def _try_runtime_fts_rebuild(self, exc: sqlite3.DatabaseError) -> bool:
         """One-shot in-place FTS rebuild after a corrupt-index write failure.

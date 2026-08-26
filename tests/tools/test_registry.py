@@ -14,6 +14,8 @@ from tools.registry import (
     discover_builtin_tools,
     tool_error,
 )
+from tools.registry import ToolRegistry, _module_registers_tools, discover_builtin_tools
+from hermes_icons import ICON_BOLT, NerdFontIcons
 
 
 def _dummy_handler(args, **kwargs):
@@ -378,13 +380,35 @@ class TestEmojiMetadata:
         assert reg._tools["t"].emoji == "🔥"
 
 
+    def test_get_emoji_returns_registered(self):
+        reg = ToolRegistry()
+        reg.register(
+            name="t", toolset="s", schema=_make_schema(),
+            handler=_dummy_handler, emoji=NerdFontIcons.get("fa-bullseye"),
+        )
+        assert reg.get_emoji("t") == NerdFontIcons.get("fa-bullseye")
+
+    def test_get_emoji_returns_default_when_unset(self):
+        reg = ToolRegistry()
+        reg.register(
+            name="t", toolset="s", schema=_make_schema(),
+            handler=_dummy_handler,
+        )
+        assert reg.get_emoji("t") == ICON_BOLT
+        assert reg.get_emoji("t", default=NerdFontIcons.get("fa-screwdriver_wrench")) == NerdFontIcons.get("fa-screwdriver_wrench")
+
+    def test_get_emoji_returns_default_for_unknown_tool(self):
+        reg = ToolRegistry()
+        assert reg.get_emoji("nonexistent") == ICON_BOLT
+        assert reg.get_emoji("nonexistent", default=NerdFontIcons.get("fa-question")) == NerdFontIcons.get("fa-question")
+
     def test_emoji_empty_string_treated_as_unset(self):
         reg = ToolRegistry()
         reg.register(
             name="t", toolset="s", schema=_make_schema(),
             handler=_dummy_handler, emoji="",
         )
-        assert reg.get_emoji("t") == "⚡"
+        assert reg.get_emoji("t") == ICON_BOLT
 
 
 class TestEntryLookup:

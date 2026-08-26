@@ -2303,13 +2303,14 @@ class CLICommandsMixin:
                 ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
                 if response:
                     try:
-                        from hermes_cli.skin_engine import get_active_skin
+                        from hermes_cli.skin_engine import get_active_skin, get_active_brand_icon
                         _skin = get_active_skin()
-                        label = _skin.get_branding("response_label", "⚕ Hermes")
+                        label = _skin.get_branding("response_label", f"{get_active_brand_icon()} Hermes")
                         _resp_color = _maybe_remap_for_light_mode(_skin.get_color("response_border", "#CD7F32"))
                         _resp_text = _maybe_remap_for_light_mode(_skin.get_color("banner_text", "#FFF8DC"))
                     except Exception:
-                        label = "⚕ Hermes"
+                        from hermes_cli.skin_engine import get_active_brand_icon
+                        label = f"{get_active_brand_icon()} Hermes"
                         _resp_color = "#CD7F32"
                         _resp_text = "#FFF8DC"
 
@@ -3835,6 +3836,12 @@ class CLICommandsMixin:
         """
         from hermes_cli.config import is_managed, format_managed_message
 
+        try:
+            from hermes_cli.skin_engine import get_active_brand_icon
+            _icon = get_active_brand_icon()
+        except Exception:
+            _icon = "⚕"
+
         if is_managed():
             print(f"  ✗ {format_managed_message('update Hermes Agent')}")
             return False
@@ -3848,7 +3855,7 @@ class CLICommandsMixin:
             ("cancel", "Cancel", "keep the current session"),
         ]
         raw = self._prompt_text_input_modal(
-            title="⚕  Update Hermes Agent",
+            title=f"{_icon}  Update Hermes Agent",
             detail="This will exit the current session and run `hermes update`.",
             choices=choices,
         )
@@ -3861,7 +3868,7 @@ class CLICommandsMixin:
             return False
 
         print()
-        print("  ⚕ Launching update...")
+        print(f"  {_icon} Launching update...")
         print()
 
         # Store the relaunch args so run() can exec them from the main thread

@@ -1,0 +1,36 @@
+name: shell-security
+version: 1.0.0
+description: |
+  Validates shell commands before execution using ShellCheck and vet.
+  Scans shell scripts for security issues, syntax errors, and common pitfalls.
+  Integrates with the terminal and execute_code tools.
+author: Hermes Security Plugin
+
+hooks:
+  - pre_tool_call
+
+config:
+  shellcheck_path:
+    type: string
+    default: ""
+    description: Path to shellcheck binary. Auto-detected if empty.
+  vet_path:
+    type: string
+    default: ""
+    description: Path to vet binary. Auto-detected if empty.
+  block_on_error:
+    type: boolean
+    default: true
+    description: Block command execution if ShellCheck finds errors.
+  warn_on_warning:
+    type: boolean
+    default: true
+    description: Warn but allow execution if ShellCheck finds warnings.
+  max_script_size:
+    type: integer
+    default: 100000
+    description: Maximum script size in bytes to scan.
+  allowed_schemes:
+    type: list
+    default: ["https"]
+    description: Allowed URL schemes for remote scripts.

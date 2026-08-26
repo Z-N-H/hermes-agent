@@ -6300,9 +6300,14 @@ def run_job(
                     job_id, len(_mcp_tools),
                 )
         except Exception as _mcp_exc:
+            # exc_info: this has failed for every cron job with a bare
+            # "'function' object is not subscriptable" and no traceback
+            # (seen 2026-07-28/29/30 in errors.log) — un-diagnosable without
+            # the stack. Non-fatal stands; just log it properly.
             logger.warning(
                 "Job '%s': MCP initialization failed (non-fatal): %s",
                 job_id, _mcp_exc,
+                exc_info=True,
             )
 
         agent = AIAgent(
