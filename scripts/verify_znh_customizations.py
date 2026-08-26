@@ -126,6 +126,16 @@ def run_pytest() -> tuple[bool, str]:
 
 
 def main() -> int:
+    import sys as _sys
+
+    # --skip-tests: run only the structural checks, not the companion pytest
+    # files. Needed in CI and any fresh clone: the icon tests import
+    # data/nerdfonts/glyphnames.json, and `data/` is gitignored (upstream
+    # .gitignore), so that file exists only on machines where it was fetched
+    # by hand. The companion tests are run by the normal test suite anyway;
+    # the structural checks are the part that catches dropped fork patches.
+    skip_tests = "--skip-tests" in _sys.argv[1:]
+
     failures: list[str] = []
     print(f"Verifying znh/custom customizations in {REPO_ROOT} ...\n")
 
@@ -138,12 +148,15 @@ def main() -> int:
             failures.append(check.name)
 
     print()
-    print("Running companion tests...")
-    tests_ok, tail = run_pytest()
-    print(f"[{'OK  ' if tests_ok else 'FAIL'}] companion pytest files")
-    if not tests_ok:
-        print(f"       {tail}")
-        failures.append("companion pytest files")
+    if skip_tests:
+        print("Skipping companion tests (--skip-tests).")
+    else:
+        print("Running companion tests...")
+        tests_ok, tail = run_pytest()
+        print(f"[{'OK  ' if tests_ok else 'FAIL'}] companion pytest files")
+        if not tests_ok:
+            print(f"       {tail}")
+            failures.append("companion pytest files")
 
     print()
     if failures:
@@ -154,7 +167,8 @@ def main() -> int:
             print(f"     - {name}")
         return 1
 
-    print(f"✓ All {len(CHECKS)} customization checks + companion tests passed.")
+    suffix = "" if skip_tests else " + companion tests"
+    print(f"\u2713 All {len(CHECKS)} customization checks{suffix} passed.")
     return 0
 
 
