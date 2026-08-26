@@ -373,6 +373,40 @@ _SAFE_ENV_KEYS = frozenset({
     "PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR",
 })
 
+# Proxy-control env vars belonging to an egress-firewall sandbox that Hermes
+# itself is running inside.  When the sandbox is the only route off the box
+# (nono and the Docker/iron-proxy profile both kill direct DNS), stdio MCP
+# subprocesses MUST inherit this plumbing or every outbound connection they
+# make dies with "Name or service not known" — httpx/requests/node already
+# honour these names, so nothing else needs patching.
+#
+# Both casings are listed deliberately: httpx and requests read whichever is
+# present, and sandboxes commonly set only one of the pair.
+#
+# These are *control* vars only — where to send bytes and which CA to trust.
+# Provider credentials (OPENAI_API_KEY, GITHUB_TOKEN, …) are never in this
+# set and stay filtered; an MCP server that needs one still declares it in
+# its ``env:`` config block.  NODE_OPTIONS is deliberately excluded even
+# though it can carry TLS flags: it also accepts ``--require``, which turns
+# an env passthrough into arbitrary code execution in the child.
+_SANDBOX_PROXY_ENV_KEYS = frozenset({
+    "HTTPS_PROXY", "https_proxy",
+    "HTTP_PROXY", "http_proxy",
+    "NO_PROXY", "no_proxy",
+    "ALL_PROXY", "all_proxy",
+    # CA trust for the sandbox proxy's MITM certificate.
+    "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+    # Node >= 24 ignores *_PROXY unless this opt-in is set; nono sets it.
+    "NODE_USE_ENV_PROXY",
+    # Sandbox sentinels — pass through so nested children keep detecting.
+    "HERMES_EGRESS_PROXY",
+})
+
+# Hosts that only ever name the local machine.  A proxy pointed at one of
+# these was minted by a sandbox on this box, not by a corporate network.
+_LOOPBACK_PROXY_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
 _SAFE_ENV_KEYS_CASE_INSENSITIVE = frozenset({
     # Windows process/location vars. These are needed by launcher-style tools
     # such as Docker Desktop's MCP plugin discovery, and do not carry secrets.
@@ -443,6 +477,51 @@ def _env_ref_name(ref: str) -> str:
 # Security helpers
 # ---------------------------------------------------------------------------
 
+def _sandbox_proxy_active() -> bool:
+    """True when this process is running inside an egress-proxy sandbox.
+
+    Detection must not hang off one vendor's sentinel: Hermes ships a Docker
+    sandbox (``tools/environments/docker.py`` sets ``HERMES_EGRESS_PROXY=1``)
+    but is also run under third-party sandboxes such as ``nono``, which set
+    the standard ``*_PROXY`` plumbing and their own markers and know nothing
+    about Hermes' sentinel.  Gating solely on ``HERMES_EGRESS_PROXY`` silently
+    no-ops everywhere except Docker, so three independent signals are checked:
+
+    1. ``HERMES_EGRESS_PROXY`` — Hermes' own Docker/iron-proxy sandbox.
+    2. ``NONO_PROXY_TOKEN`` / ``NONO_CAP_FILE`` — the ``nono`` sandbox.
+    3. A ``*_PROXY`` URL pointing at loopback — the generic fallback that
+       covers any sandbox which mints a local egress proxy without
+       advertising itself.  A corporate proxy is never on 127.0.0.1, so this
+       does not sweep in ambient host proxy settings.
+
+    Ambient, non-loopback proxy vars set by the user's shell stay filtered,
+    exactly as before.
+    """
+    if os.environ.get("HERMES_EGRESS_PROXY", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        return True
+
+    if os.environ.get("NONO_PROXY_TOKEN") or os.environ.get("NONO_CAP_FILE"):
+        return True
+
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy",
+                "ALL_PROXY", "all_proxy"):
+        raw = (os.environ.get(key) or "").strip()
+        if not raw:
+            continue
+        # A bare "host:port" has no scheme; urlparse would read it as one.
+        candidate = raw if "://" in raw else f"http://{raw}"
+        try:
+            host = urlparse(candidate).hostname
+        except ValueError:  # malformed proxy URL — ignore, don't crash
+            continue
+        if host and host.lower() in _LOOPBACK_PROXY_HOSTS:
+            return True
+
+    return False
+
+
 def _build_safe_env(user_env: Optional[dict]) -> dict:
     """Build a filtered environment dict for stdio subprocesses.
 
@@ -451,6 +530,12 @@ def _build_safe_env(user_env: Optional[dict]) -> dict:
     external secret source (Bitwarden, 1Password, plugin backends) that
     Hermes explicitly tagged during dotenv loading, plus any variables
     explicitly specified by the user in the server config.
+
+    When Hermes itself runs inside an egress-proxy sandbox (see
+    :func:`_sandbox_proxy_active`), that sandbox's proxy-control vars
+    (``_SANDBOX_PROXY_ENV_KEYS``) also pass through, because the sandbox
+    proxy is the subprocess's only route to the network.  Credentials are
+    still filtered — the proxy-control set contains no provider secrets.
 
     This prevents accidentally leaking secrets like API keys, tokens, or
     credentials to MCP server subprocesses.  Secret-source-injected vars are
@@ -462,6 +547,7 @@ def _build_safe_env(user_env: Optional[dict]) -> dict:
         from hermes_cli.env_loader import get_secret_source
     except Exception:  # pragma: no cover — early bootstrap/import fallback
         get_secret_source = None
+    include_proxy = _sandbox_proxy_active()
     env = {}
     for key, value in os.environ.items():
         if (
@@ -469,6 +555,7 @@ def _build_safe_env(user_env: Optional[dict]) -> dict:
             or key.upper() in _SAFE_ENV_KEYS_CASE_INSENSITIVE
             or key.startswith("XDG_")
             or (get_secret_source is not None and get_secret_source(key))
+            or (include_proxy and key in _SANDBOX_PROXY_ENV_KEYS)
         ):
             env[key] = value
     if user_env:

@@ -600,6 +600,18 @@ PATH, HOME, USER, LANG, LC_ALL, TERM, SHELL, TMPDIR
 
 Plus any `XDG_*` variables. All other environment variables (API keys, tokens, secrets) are **stripped**.
 
+**Egress-proxy sandboxes:** when Hermes itself runs inside a sandbox whose proxy is the only route to the network, that sandbox's proxy-control variables also pass through to MCP stdio subprocesses — otherwise every outbound connection an MCP server makes fails with `Name or service not known`:
+
+```
+HTTPS_PROXY/https_proxy, HTTP_PROXY/http_proxy, NO_PROXY/no_proxy,
+ALL_PROXY/all_proxy, REQUESTS_CA_BUNDLE, SSL_CERT_FILE, SSL_CERT_DIR,
+CURL_CA_BUNDLE, NODE_EXTRA_CA_CERTS, NODE_USE_ENV_PROXY, HERMES_EGRESS_PROXY
+```
+
+A sandbox is detected by any of: `HERMES_EGRESS_PROXY=1` (Hermes' own Docker/iron-proxy sandbox), `NONO_PROXY_TOKEN`/`NONO_CAP_FILE` (the `nono` sandbox), or a `*_PROXY` value pointing at loopback (the generic case — a corporate proxy is never on `127.0.0.1`).
+
+These are connection plumbing only: where to send bytes and which CA to trust. Provider credentials (`OPENAI_API_KEY`, `GITHUB_TOKEN`, …) and the sandbox's own internals (`NONO_PROXY_TOKEN`, `NONO_CAP_FILE`) remain **stripped** — an MCP server that needs a provider credential still declares it in its `env` block. `NODE_OPTIONS` is deliberately excluded: it accepts `--require`, which would turn an env passthrough into arbitrary code execution in the child. Ambient, non-loopback proxy variables set in your shell on a normal host are not passed through either.
+
 Variables explicitly defined in the MCP server's `env` config are passed through:
 
 ```yaml
