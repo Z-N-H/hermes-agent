@@ -45,7 +45,6 @@ def _on_status_bar_fragment(
         return None
 
     import time
-
     age = time.time() - last_update
     if age > _STALE_AFTER_SEC:
         return None

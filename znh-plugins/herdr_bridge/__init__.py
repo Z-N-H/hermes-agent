@@ -99,7 +99,8 @@ _TOOL_VERBS = {
     "execute_code": "Run",
     "delegate_task": "Delegate",
 }
-_PATH_KEYS = ("path", "file_path", "target_file", "filename", "file", "notebook_path")
+_PATH_KEYS = ("path", "file_path", "target_file", "filename", "file",
+              "notebook_path")
 _COMMAND_MAX = 60
 
 
@@ -109,9 +110,7 @@ def _debug(line: str) -> None:
         return
     try:
         home = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
-        with open(
-            os.path.join(home, "logs", "herdr-bridge.log"), "a", encoding="utf-8"
-        ) as fh:
+        with open(os.path.join(home, "logs", "herdr-bridge.log"), "a") as fh:
             fh.write(f"{time.time():.3f} {line}\n")
     except Exception:  # noqa: BLE001, S110 — debug must never break anything
         pass
@@ -128,9 +127,8 @@ def _target() -> tuple[str, str] | None:
     return pane_id, socket_path
 
 
-def _send(
-    method: str, params: dict, pane_id: str | None = None, agent: str | None = None
-) -> None:
+def _send(method: str, params: dict, pane_id: str | None = None,
+          agent: str | None = None) -> None:
     target = _target()
     if target is None:
         return
@@ -268,10 +266,7 @@ def _cli(*args: str) -> dict | None:
     try:
         result = subprocess.run(
             [HERDR_BIN, *args],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
+            capture_output=True, text=True, timeout=5, check=False,
         )
     except Exception:  # noqa: BLE001 — visibility must never break the agent
         return None
@@ -298,9 +293,8 @@ def _next_child_name(prefix: str) -> str:
     """First free `<prefix>-hermes-NN` ordinal among live agent names."""
     payload = _cli("agent", "list") or {}
     agents = (payload.get("result") or {}).get("agents") or []
-    taken = {
-        str(a.get("name")) for a in agents if isinstance(a, dict) and a.get("name")
-    }
+    taken = {str(a.get("name")) for a in agents
+             if isinstance(a, dict) and a.get("name")}
     for nn in range(1, 50):
         name = f"{prefix}-hermes-{nn:02d}"
         if name not in taken:
@@ -314,34 +308,27 @@ def _spawn_child_pane(label: str) -> tuple[str, str] | None:
     prefix = _child_prefix()
     if target is None or not prefix:
         return None
-    payload = _cli("pane", "split", target[0], "--direction", "down", "--no-focus")
-    pane_id = ((payload or {}).get("result") or {}).get("pane", {}).get("pane_id")
+    payload = _cli("pane", "split", target[0],
+                   "--direction", "down", "--no-focus")
+    pane_id = ((payload or {}).get("result") or {}).get("pane", {}).get(
+        "pane_id")
     if not pane_id:
         return None
     name = _next_child_name(prefix)
     # Report before rename: rename addresses the agent record that the report
     # creates (rename into an empty pane is a silent no-op — verified live).
-    _send("pane.report_agent", {"state": "working"}, pane_id=pane_id, agent=name)
+    _send("pane.report_agent", {"state": "working"}, pane_id=pane_id,
+          agent=name)
     _cli("agent", "rename", pane_id, name)
-    _cli(
-        "pane",
-        "run",
-        pane_id,
-        "printf '%s\\n' "
-        + "'"
-        + f"↳ hermes subagent: {label[:60]}".replace("'", "'\\''")
-        + "' "
-        "'(an in-process thread of this tab'\\''s parent agent — "
-        "this pane carries its sidebar row)'",
-    )
-    _send(
-        "pane.report_metadata",
-        {
-            "display_agent": f"↳ {label[:48]}",
-            "state_labels": {"working": label[:_MESSAGE_MAX]},
-        },
-        pane_id=pane_id,
-    )
+    _cli("pane", "run", pane_id,
+         "printf '%s\\n' " + "'" + f"↳ hermes subagent: {label[:60]}".replace(
+             "'", "'\\''") + "' "
+         "'(an in-process thread of this tab'\\''s parent agent — "
+         "this pane carries its sidebar row)'")
+    _send("pane.report_metadata", {
+        "display_agent": f"↳ {label[:48]}",
+        "state_labels": {"working": label[:_MESSAGE_MAX]},
+    }, pane_id=pane_id)
     _debug(f"subagent pane {pane_id} as {name}")
     return pane_id, name
 
@@ -349,13 +336,9 @@ def _spawn_child_pane(label: str) -> tuple[str, str] | None:
 def _finish_child_pane(pane_id: str, name: str) -> None:
     """Flip a subagent pane to `done` — retained for review with the tab."""
     _send("pane.report_agent", {"state": "idle"}, pane_id=pane_id, agent=name)
-    _send(
-        "pane.report_metadata",
-        {
-            "state_labels": {"done": "finished"},
-        },
-        pane_id=pane_id,
-    )
+    _send("pane.report_metadata", {
+        "state_labels": {"done": "finished"},
+    }, pane_id=pane_id)
 
 
 def _subagent_label(kwargs: dict) -> str:
