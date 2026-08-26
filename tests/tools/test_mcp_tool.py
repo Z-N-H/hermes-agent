@@ -1120,6 +1120,125 @@ class TestBuildSafeEnv:
         assert result["NOTION_TOKEN"] == "from-op"
         assert "UNTRACKED_SECRET_KEY" not in result
 
+    # -- sandbox egress-proxy passthrough ---------------------------------
+
+    NONO_ENV = {
+        "PATH": "/usr/bin",
+        "HTTPS_PROXY": "http://nono:tok@127.0.0.1:37853",
+        "https_proxy": "http://nono:tok@127.0.0.1:37853",
+        "HTTP_PROXY": "http://nono:tok@127.0.0.1:37853",
+        "http_proxy": "http://nono:tok@127.0.0.1:37853",
+        "NO_PROXY": "localhost,127.0.0.1",
+        "no_proxy": "localhost,127.0.0.1",
+        "NODE_USE_ENV_PROXY": "1",
+        "NONO_PROXY_TOKEN": "tok",
+        "NONO_NO_PROXY": "localhost,127.0.0.1",
+        "NONO_CAP_FILE": "/tmp/.nono-cap.json",
+        "OPENAI_API_KEY": "sk-proj-abc123",
+        "GITHUB_TOKEN": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    }
+
+    def test_nono_sandbox_proxy_vars_passed(self):
+        """nono sets no HERMES_EGRESS_PROXY; its proxy plumbing must still
+        reach MCP stdio subprocesses or they have no route off the box."""
+        from tools.mcp_tool import _build_safe_env
+
+        with patch.dict("os.environ", self.NONO_ENV, clear=True):
+            result = _build_safe_env(None)
+
+        for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy",
+                    "NO_PROXY", "no_proxy", "NODE_USE_ENV_PROXY"):
+            assert result[key] == self.NONO_ENV[key], f"{key} was stripped"
+
+    def test_nono_sandbox_still_strips_secrets(self):
+        """Proxy passthrough must not become a general env passthrough."""
+        from tools.mcp_tool import _build_safe_env
+
+        with patch.dict("os.environ", self.NONO_ENV, clear=True):
+            result = _build_safe_env(None)
+
+        assert "OPENAI_API_KEY" not in result
+        assert "GITHUB_TOKEN" not in result
+        # Sandbox internals the child has no business reading.
+        assert "NONO_CAP_FILE" not in result
+        assert "NONO_PROXY_TOKEN" not in result
+
+    def test_docker_egress_sentinel_still_works(self):
+        """The HERMES_EGRESS_PROXY path (Docker/iron-proxy) is not dropped."""
+        from tools.mcp_tool import _build_safe_env
+
+        fake_env = {
+            "PATH": "/usr/bin",
+            "HERMES_EGRESS_PROXY": "1",
+            "HTTPS_PROXY": "http://iron-proxy.internal:8080",
+            "NO_PROXY": "localhost",
+            "REQUESTS_CA_BUNDLE": "/etc/ssl/iron.pem",
+            "NODE_EXTRA_CA_CERTS": "/etc/ssl/iron.pem",
+            "OPENAI_API_KEY": "sk-proj-abc123",
+        }
+        with patch.dict("os.environ", fake_env, clear=True):
+            result = _build_safe_env(None)
+
+        assert result["HTTPS_PROXY"] == "http://iron-proxy.internal:8080"
+        assert result["HERMES_EGRESS_PROXY"] == "1"
+        assert result["REQUESTS_CA_BUNDLE"] == "/etc/ssl/iron.pem"
+        assert result["NODE_EXTRA_CA_CERTS"] == "/etc/ssl/iron.pem"
+        assert "OPENAI_API_KEY" not in result
+
+    def test_loopback_proxy_detected_without_any_sentinel(self):
+        """Generic fallback: a loopback proxy is sandbox-minted, not corporate."""
+        from tools.mcp_tool import _build_safe_env
+
+        fake_env = {
+            "PATH": "/usr/bin",
+            "HTTPS_PROXY": "http://user:tok@localhost:8080",
+            "OPENAI_API_KEY": "sk-proj-abc123",
+        }
+        with patch.dict("os.environ", fake_env, clear=True):
+            result = _build_safe_env(None)
+
+        assert result["HTTPS_PROXY"] == "http://user:tok@localhost:8080"
+        assert "OPENAI_API_KEY" not in result
+
+    def test_ambient_host_proxy_not_passed(self):
+        """No sandbox and a non-loopback proxy: behaviour is unchanged."""
+        from tools.mcp_tool import _build_safe_env
+
+        fake_env = {
+            "PATH": "/usr/bin",
+            "HTTPS_PROXY": "http://corp-proxy.example.com:3128",
+            "http_proxy": "http://corp-proxy.example.com:3128",
+            "NO_PROXY": "example.com",
+            "REQUESTS_CA_BUNDLE": "/etc/ssl/corp.pem",
+        }
+        with patch.dict("os.environ", fake_env, clear=True):
+            result = _build_safe_env(None)
+
+        assert "HTTPS_PROXY" not in result
+        assert "http_proxy" not in result
+        assert "NO_PROXY" not in result
+        assert "REQUESTS_CA_BUNDLE" not in result
+
+    def test_malformed_proxy_url_does_not_crash(self):
+        """A junk *_PROXY value must not blow up subprocess env construction."""
+        from tools.mcp_tool import _build_safe_env
+
+        fake_env = {"PATH": "/usr/bin", "HTTPS_PROXY": "http://[::1"}
+        with patch.dict("os.environ", fake_env, clear=True):
+            result = _build_safe_env(None)
+
+        assert result["PATH"] == "/usr/bin"
+
+    def test_bare_hostport_loopback_proxy_detected(self):
+        """Scheme-less proxy values still resolve to a loopback host."""
+        from tools.mcp_tool import _build_safe_env
+
+        fake_env = {"PATH": "/usr/bin", "HTTP_PROXY": "127.0.0.1:37853"}
+        with patch.dict("os.environ", fake_env, clear=True):
+            result = _build_safe_env(None)
+
+        assert result["HTTP_PROXY"] == "127.0.0.1:37853"
+
     def test_windows_location_vars_passed_without_secrets(self):
         """Windows launcher tools need location vars, but secrets stay filtered."""
         from tools.mcp_tool import _build_safe_env
