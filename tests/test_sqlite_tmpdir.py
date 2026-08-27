@@ -116,6 +116,50 @@ def test_sessiondb_init_pins_sqlite_tmpdir(db, tmp_path, monkeypatch):
     assert expected.is_dir()
 
 
+def test_chmod_denial_does_not_reject_writable_dir(tmp_path, monkeypatch):
+    """Shared/system dirs (e.g. operator-set /tmp) can't be chmod'd by us;
+    that must not reject an actually-writable candidate. The real
+    open(O_CREAT) probe, not chmod, decides usability."""
+    anchor = tmp_path / "profile"
+    anchor.mkdir()
+
+    def deny_chmod(path, mode):
+        raise PermissionError(1, "Operation not permitted", str(path))
+
+    monkeypatch.setattr(os, "chmod", deny_chmod)
+    result = ensure_sqlite_tmpdir(anchor)
+    assert result is not None
+    assert result.parent == anchor
+    assert os.environ["SQLITE_TMPDIR"] == str(result)
+
+
+def test_access_lying_writable_does_not_honour_override(tmp_path, monkeypatch):
+    """Under Landlock/nono, access(2) can report a dir writable while
+    open(2) denies it (2026-08-24 incident). A candidate that fails the
+    real create probe must not be honoured, even when access() says W_OK."""
+    import builtins
+
+    victim = tmp_path / "access-lies"
+    victim.mkdir()
+    monkeypatch.setenv("SQLITE_TMPDIR", str(victim))
+    anchor = tmp_path / "profile"
+    anchor.mkdir()
+
+    real_open = os.open
+
+    def sandbox_open(path, flags, mode=0o777, *, dirfd=None):
+        if str(path).startswith(str(victim)):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_open(path, flags, mode, dir_fd=dirfd)
+
+    monkeypatch.setattr(os, "open", sandbox_open)
+    result = ensure_sqlite_tmpdir(anchor)
+    # The lying override is overridden with the anchor fallback.
+    assert result is not None
+    assert result.parent == anchor
+    assert result != victim
+
+
 def test_sessiondb_init_respects_operator_override(db, tmp_path, monkeypatch):
     # A second open after the first pinned the env to a writable dir must NOT
     # keep replacing it per-instance (idempotent: existing writable value wins).

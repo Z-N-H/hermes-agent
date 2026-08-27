@@ -2496,6 +2496,31 @@ def _backup_db_file(db_path: Path) -> "Tuple[Optional[Path], Optional[str]]":
 _SQLITE_TMP_ENV_VARS = ("SQLITE_TMPDIR", "TMPDIR")
 
 
+def _dir_really_writable(path: Path) -> bool:
+    """Real open(O_CREAT) probe — access(2) is not authoritative.
+
+    Under policy sandboxes (Landlock/nono) access(2) answers from raw DAC
+    bits while open(2) is what the policy restricts, so "writable via
+    access" can still deny every real write (2026-08-24 session-storage
+    incident). Only a real create agrees with the writes this temp dir is
+    chosen for. Mirrors tools/environments/local.py's probe; kept as a
+    small local copy so hermes_state stays importable without the tool
+    environment stack.
+    """
+    probe = path / f".hermes-tmp-probe-{os.getpid()}"
+    try:
+        fd = os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
+        os.unlink(probe)
+        return True
+    except OSError:
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass
+        return False
+
+
 def ensure_sqlite_tmpdir(anchor_dir: Optional[Path] = None) -> Optional[Path]:
     """Pin SQLite's scratch/temp-file directory to a sandbox-proof location.
 
@@ -2513,6 +2538,10 @@ def ensure_sqlite_tmpdir(anchor_dir: Optional[Path] = None) -> Optional[Path]:
     This helper makes the failure unreachable-by-construction:
 
     - ``SQLITE_TMPDIR`` set to an existing writable dir → honoured untouched.
+      "Writable" is decided by a real ``open(O_CREAT)`` probe, never by
+      ``os.access()`` — under policy sandboxes (Landlock/nono) access(2)
+      answers from raw DAC bits while open(2) is what the sandbox actually
+      restricts.
     - ``SQLITE_TMPDIR`` set but the dir doesn't exist yet → created in place
       (the operator's choice wins when the environment can honour it).
     - ``SQLITE_TMPDIR`` set but unusable (sandbox denies creation / not
@@ -2531,11 +2560,11 @@ def ensure_sqlite_tmpdir(anchor_dir: Optional[Path] = None) -> Optional[Path]:
     if existing:
         path = Path(existing)
         try:
-            if path.is_dir() and os.access(path, os.W_OK | os.X_OK):
+            if path.is_dir() and _dir_really_writable(path):
                 return path
             # Missing dir: try to honour the operator's choice by creating it.
             path.mkdir(parents=True, exist_ok=True)
-            if path.is_dir() and os.access(path, os.W_OK | os.X_OK):
+            if path.is_dir() and _dir_really_writable(path):
                 logger.info(
                     "SQLITE_TMPDIR=%s did not exist; created it and honouring "
                     "the operator override.",
@@ -2573,7 +2602,7 @@ def ensure_sqlite_tmpdir(anchor_dir: Optional[Path] = None) -> Optional[Path]:
                 os.chmod(fallback, 0o700)
             except OSError:
                 pass
-        if not (fallback.is_dir() and os.access(fallback, os.W_OK | os.X_OK)):
+        if not (fallback.is_dir() and _dir_really_writable(fallback)):
             logger.debug(
                 "Anchor temp dir %s unusable; leaving ambient SQLite temp-dir "
                 "resolution in place.",
