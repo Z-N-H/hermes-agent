@@ -105,6 +105,46 @@ class TestPhoenixPlugin:
             mock_span.set_attribute.assert_any_call("gen_ai.response.finish_reason", "stop")
             mock_span.end.assert_called_once()
 
+    def test_on_api_request_error_ends_span_and_clears_state(self):
+        """on_api_request_error should end the llm.invoke span and clear _SPAN_STATE.
+
+        Without this, a request that errors instead of completing (network
+        failure, sandbox block, invalid response) leaves its span in
+        _SPAN_STATE forever, since on_post_api_request only fires on success.
+        """
+        from plugins.observability.phoenix import on_api_request_error
+
+        mock_span = MagicMock()
+        key = "req-123"
+
+        with patch("plugins.observability.phoenix._SPAN_STATE", {key: {"span": mock_span}}) as state:
+            on_api_request_error(
+                api_request_id="req-123",
+                error_type="ConnectionResetError",
+                error_message="Connection reset by peer",
+            )
+
+            mock_span.set_attribute.assert_any_call("error.type", "ConnectionResetError")
+            mock_span.end.assert_called_once()
+            assert key not in state
+
+    def test_on_api_request_error_missing_key_is_noop(self):
+        """Unknown api_request_id should not raise (e.g. hook fired without a matching pre_api_request)."""
+        from plugins.observability.phoenix import on_api_request_error
+
+        with patch("plugins.observability.phoenix._SPAN_STATE", {}):
+            on_api_request_error(api_request_id="unknown-req", error_type="Timeout")
+
+    def test_register_wires_api_request_error_hook(self):
+        """register() must subscribe on_api_request_error, or failed requests leak spans forever."""
+        from plugins.observability.phoenix import register
+
+        ctx = MagicMock()
+        register(ctx)
+
+        hook_names = [call.args[0] for call in ctx.register_hook.call_args_list]
+        assert "api_request_error" in hook_names
+
     def test_on_pre_tool_call_returns_traceparent(self):
         """on_pre_tool_call should return TRACEPARENT dict when a span is active."""
         from plugins.observability.phoenix import on_pre_tool_call

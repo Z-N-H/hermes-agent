@@ -525,6 +525,62 @@ def on_post_api_request(
             pass
 
 
+def on_api_request_error(
+    *,
+    api_request_id: str = "",
+    error_type: Optional[str] = None,
+    error_message: Optional[str] = None,
+    status_code: Any = None,
+    retry_count: Any = None,
+    api_duration: float = 0.0,
+    reason: Any = None,
+    **_: Any,
+) -> None:
+    """End the ``llm.invoke`` span for a request that errored instead of completing.
+
+    ``on_post_api_request`` only fires on success, so without this hook any
+    request that fails (network error, sandbox block, invalid response)
+    leaves its span — and up to ~8KB of captured prompt text — stuck in
+    ``_SPAN_STATE`` forever. Mirrors the langfuse plugin's
+    ``on_api_request_error``, which exists for the same reason.
+    """
+    key = _req_key(api_request_id)
+
+    with _STATE_LOCK:
+        state = _SPAN_STATE.pop(key, None)
+    if state is None:
+        return
+
+    span = state.get("span")
+    if span is None:
+        return
+
+    try:
+        span.set_attribute("error.type", error_type or "APIRequestError")
+        if error_message:
+            span.set_attribute("error.message", str(error_message)[:1000])
+        if status_code is not None:
+            span.set_attribute("hermes.status_code", str(status_code))
+        if retry_count is not None:
+            span.set_attribute("hermes.retry_count", retry_count)
+        if api_duration and api_duration > 0:
+            span.set_attribute("hermes.api_duration_s", round(api_duration, 3))
+        span.set_status(
+            _Status(
+                _StatusCode.ERROR,
+                description=f"{error_type or 'error'}: {error_message or reason or ''}"[:200],
+            )
+        )
+        span.end()
+        _debug(f"ended llm.invoke span for {key} (error) type={error_type}")
+    except Exception as exc:
+        logger.debug("phoenix plugin: failed to end llm.invoke span on error: %s", exc)
+        try:
+            span.end()
+        except Exception:
+            pass
+
+
 def on_pre_tool_call(
     *,
     tool_name: str = "",
@@ -697,6 +753,7 @@ def inject_trace_context(env: Dict[str, str]) -> Dict[str, str]:
 def register(ctx) -> None:
     ctx.register_hook("pre_api_request", on_pre_api_request)
     ctx.register_hook("post_api_request", on_post_api_request)
+    ctx.register_hook("api_request_error", on_api_request_error)
     ctx.register_hook("pre_tool_call", on_pre_tool_call)
     ctx.register_hook("post_tool_call", on_post_tool_call)
     _install_subprocess_patch()
