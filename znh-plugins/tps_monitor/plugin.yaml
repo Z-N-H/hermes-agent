@@ -1,0 +1,6 @@
+name: tps_monitor
+version: 1.0.0
+description: "Show real-time tokens/second in the Hermes CLI status bar during streaming responses."
+author: "znh"
+hooks:
+  - status_bar_fragment
