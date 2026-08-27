@@ -97,6 +97,27 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
         help="Absolute path for the job to run from. Injects AGENTS.md / CLAUDE.md / .cursorrules from that directory and uses it as the cwd for terminal/file/code_exec tools. Omit to preserve old behaviour (no project context files).",
     )
     cron_create.add_argument(
+        "--required-mcp-tool",
+        dest="required_mcp_tools",
+        action="append",
+        help=(
+            "MCP tool name/pattern (glob, e.g. 'granola_*') the job needs to "
+            "run. If any is unavailable at fire time, the run fails BEFORE "
+            "the LLM turn (zero inference spend) and alerts. Repeatable. "
+            "Omit to inherit from attached skills' frontmatter."
+        ),
+    )
+    cron_create.add_argument(
+        "--required-mcp-server",
+        dest="required_mcp_servers",
+        action="append",
+        help=(
+            "MCP server name (mcp_servers config key) that must be connected "
+            "at fire time, with the same fail-before-inference semantics. "
+            "Repeatable."
+        ),
+    )
+    cron_create.add_argument(
         "--model",
         help=(
             "Pin this job to a specific inference model (user-owned; the "
@@ -231,6 +252,23 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
     cron_edit.add_argument(
         "--workdir",
         help="Absolute path for the job to run from (injects AGENTS.md etc. and sets terminal cwd). Pass empty string to clear.",
+    )
+    cron_edit.add_argument(
+        "--required-mcp-tool",
+        dest="required_mcp_tools",
+        action="append",
+        help="Replace the job's required MCP tool patterns (fail-before-inference guard). Repeatable.",
+    )
+    cron_edit.add_argument(
+        "--required-mcp-server",
+        dest="required_mcp_servers",
+        action="append",
+        help="Replace the job's required MCP servers. Repeatable.",
+    )
+    cron_edit.add_argument(
+        "--clear-required-mcp",
+        action="store_true",
+        help="Remove all required MCP tool/server declarations from the job",
     )
     cron_edit.add_argument(
         "--model",
