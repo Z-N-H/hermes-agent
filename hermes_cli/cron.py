@@ -188,6 +188,10 @@ def cron_list(show_all: bool = False):
         workdir = job.get("workdir")
         if workdir:
             print(f"    Workdir:   {workdir}")
+        if job.get("required_mcp_tools"):
+            print(f"    Required MCP tools:   {', '.join(job['required_mcp_tools'])}")
+        if job.get("required_mcp_servers"):
+            print(f"    Required MCP servers: {', '.join(job['required_mcp_servers'])}")
 
         # Execution history
         last_status = job.get("last_status")
@@ -510,6 +514,8 @@ def cron_create(args):
         monitor_url=getattr(args, "monitor_url", None),
         continuity=getattr(args, "continuity", None),
         reasoning_effort=getattr(args, "reasoning_effort", None),
+        required_mcp_tools=getattr(args, "required_mcp_tools", None),
+        required_mcp_servers=getattr(args, "required_mcp_servers", None),
     )
     if not result.get("success"):
         print(color(f"Failed to create job: {result.get('error', 'unknown error')}", Colors.RED))
@@ -567,6 +573,12 @@ def cron_edit(args):
             if skill not in final_skills:
                 final_skills.append(skill)
 
+    required_mcp_tools = _normalize_skills(None, getattr(args, "required_mcp_tools", None))
+    required_mcp_servers = _normalize_skills(None, getattr(args, "required_mcp_servers", None))
+    if getattr(args, "clear_required_mcp", False):
+        required_mcp_tools = []
+        required_mcp_servers = []
+
     result = _cron_api(
         action="update",
         job_id=args.job_id,
@@ -585,6 +597,8 @@ def cron_edit(args):
         monitor_url=getattr(args, "monitor_url", None),
         continuity=getattr(args, "continuity", None),
         reasoning_effort=getattr(args, "reasoning_effort", None),
+        required_mcp_tools=required_mcp_tools,
+        required_mcp_servers=required_mcp_servers,
     )
     if not result.get("success"):
         print(color(f"Failed to update job: {result.get('error', 'unknown error')}", Colors.RED))

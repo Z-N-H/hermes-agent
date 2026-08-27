@@ -1205,7 +1205,13 @@ Per-job fields include `skills` (load specific skills), `model` /
 stdout is injected into the prompt; `no_agent=True` turns the script
 into the entire job), `context_from` (chain job A's last output into
 job B's prompt), `workdir` (run in a specific directory with its
-`AGENTS.md`/`CLAUDE.md` loaded), and multi-platform delivery.
+`AGENTS.md`/`CLAUDE.md` loaded), `required_mcp_tools` /
+`required_mcp_servers` (declared MCP dependencies: if any pattern has
+no match in `discover_mcp_tools()` output / any server is unconnected
+at fire time, the run fails BEFORE the agent turn — zero inference
+spend, standard failure alerting; explicit at creation or inherited
+from skill frontmatter, jobs declaring nothing keep the #4219 non-fatal
+MCP behavior), and multi-platform delivery.
 
 Hardening invariants:
 - **3-minute hard interrupt** on cron sessions — runaway agent loops
