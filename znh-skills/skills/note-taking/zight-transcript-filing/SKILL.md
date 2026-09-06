@@ -32,18 +32,20 @@ Run `mcp__pantheon__search(query="zight")` before anything else. **If it returns
 
 ## Idempotency
 
-Before writing anything, check whether a note for this item already exists: search `Captures/*.md` frontmatter for a matching `zight_id`. If found, skip — this is a re-delivery (Hermes's webhook adapter has its own 1hr dedup window, but retries can land outside it), not a new capture. Never overwrite an existing capture note.
+Before writing anything, check whether a note for this item already exists: search `Transcripts/*.md` frontmatter for a matching `zight_id`. If found, skip — this is a re-delivery (Hermes's webhook adapter has its own 1hr dedup window, but retries can land outside it), not a new capture. Never overwrite an existing capture note.
 
 ## Client matching
 
-Same approach as `granola-meeting-filing`: content-based, no schema changes to client notes. Read `/mnt/z/pantheon/vault/ZNH/Clients/*.md` (filenames + aliases/brand/company names) and match against the capture's `name`, `description`, `collection_name`, and transcript content.
+**Primary signal: `collection_name`.** Zight collections generally correspond 1:1 with clients — the user files recordings into a collection per client as a matter of habit, so the collection name is a stronger, more deliberate signal than free-text content. Match `collection_name` against `/mnt/z/pantheon/vault/ZNH/Clients/*.md` (filenames + aliases/brand/company names). A confident collection match wins outright — do not second-guess it against content signals, and do not require content to corroborate it.
 
-- Confident match → set `client:` and `related: [[Clients/<Client>]]`, tag the client slug.
-- Low confidence or no signal → leave `client: ""`, tag `needs-triage`. **A wrong client silently attached is worse than an honest miss.**
+**Fallback: content-based**, same approach as `granola-meeting-filing`. Use this only when `collection_name` is generic/non-client (e.g. `Test`, `Inbox`, `Uncategorized`, or any other collection that isn't a client name) or doesn't match any known client. Match `name`, `description`, and the fetched transcript content against the same `Clients/*.md` corpus.
+
+- Confident match, from either signal → set `client:` and `related: [[Clients/<Client>]]`, tag the client slug.
+- Low confidence or no signal from both → leave `client: ""`, tag `needs-triage`. **A wrong client silently attached is worse than an honest miss.**
 
 ## Writing the note
 
-Flat `Captures/` folder (create it if it doesn't exist yet — Zight items are screen recordings/annotations, not meetings, so they don't belong in `Meetings/`). Frontmatter (uid via `/mnt/z/pantheon/vault/ZNH/scripts/vault_uid.py` scheme):
+Flat `Transcripts/` folder (create it if it doesn't exist yet — Zight items are screen recordings/annotations, not meetings, so they don't belong in `Meetings/`). Frontmatter (uid via `/mnt/z/pantheon/vault/ZNH/scripts/vault_uid.py` scheme):
 
 ```yaml
 uid: <8-char handle, vault_uid.py scheme>
@@ -82,4 +84,4 @@ One Slack Block Kit message per run: capture filed (or skipped as a duplicate), 
 
 ## Verification
 
-After filing, confirm the note exists under `Captures/` with its `zight_id` set, and any created Kanban cards exist under `TaskNotes/Tasks/`.
+After filing, confirm the note exists under `Transcripts/` with its `zight_id` set, and any created Kanban cards exist under `TaskNotes/Tasks/`.
