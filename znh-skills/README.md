@@ -9,7 +9,7 @@ Tracked here:
 
 | Root | Contents |
 |---|---|
-| `skills/<category>/<name>/` | 60 skills from the main home's `skills/` that are absent from its `.bundled_manifest` (i.e. not bundled installs) |
+| `skills/<category>/<name>/` | 61 skills from the main home's `skills/` that are absent from its `.bundled_manifest` (i.e. not bundled installs) — 60 captured at the original snapshot plus `zight-transcript-filing`, added new (never deployed to the live, untracked home) |
 | `archive/<name>/` | the 10 skills in the Curator's `.archive/` at capture time |
 | `profiles/opencode/...` | 11 skills bespoke to the `opencode` profile's own `skills/` |
 

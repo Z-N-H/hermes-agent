@@ -45,7 +45,7 @@ def _frontmatter(skill_md: Path) -> dict:
 def test_active_roots_have_expected_skill_counts() -> None:
     """50+ skills live here; a bad recursive copy that silently drops whole
     categories must fail loudly."""
-    assert len(_skill_mds(ACTIVE_ROOTS[0])) == 60
+    assert len(_skill_mds(ACTIVE_ROOTS[0])) == 61  # +1: zight-transcript-filing
     assert len(_skill_mds(ACTIVE_ROOTS[1])) == 11
     assert len(_skill_mds(ARCHIVE_ROOT)) == 10
 
