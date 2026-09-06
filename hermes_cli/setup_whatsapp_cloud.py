@@ -33,6 +33,7 @@ to verify the loop end-to-end once everything's running.
 """
 
 from __future__ import annotations
+from hermes_cli.cli_output import line_input
 
 import re
 import secrets
@@ -180,7 +181,7 @@ def _prompt(message: str, default: Optional[str] = None, secret: bool = False) -
 
             raw = getpass.getpass(f"{message}{suffix} (input hidden): ").strip()
         else:
-            raw = input(f"{message}{suffix}: ").strip()
+            raw = line_input(f"{message}{suffix}: ").strip()
     except (EOFError, KeyboardInterrupt):
         print()
         return ""
@@ -238,7 +239,12 @@ def run_whatsapp_cloud_setup() -> int:
     from hermes_cli.config import get_env_value, save_env_value
 
     print()
-    print("⚕ WhatsApp Business Cloud API Setup")
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
+    print(f"{_icon} WhatsApp Business Cloud API Setup")
     print("=" * 50)
     print()
     print("This wizard configures Hermes to talk to WhatsApp via Meta's")
@@ -444,7 +450,7 @@ def run_whatsapp_cloud_setup() -> int:
     current_allow = get_env_value("WHATSAPP_CLOUD_ALLOWED_USERS") or None
     allow_default = current_allow if current_allow else None
     try:
-        allowed = input(
+        allowed = line_input(
             f"  → Allowed users{' [' + allow_default + ']' if allow_default else ''}: "
         ).strip() or (allow_default or "")
     except (EOFError, KeyboardInterrupt):

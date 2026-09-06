@@ -1,0 +1,232 @@
+  Bash ls -la  
+  Bash pantheon task work --model hf:moonshotai/Kimi-K3 --size M  
+  Bash ls skills/ optional-skills/ znh-plugins/ 2>&1 | head -60  
+  Grep znh-skills  
+  Bash git log --oneline -30  
+  Grep znh  
+  Bash ls PROJECT_KNOWLEDGE/ && ls PROJECT_KNOWLEDGE/*.md 2>/dev/null | head  
+  Bash git show fe25045a18 --stat | head -40 && git show cc5a471fcd --stat | head -40  
+  Read CLIENT_CONTEXT.md  
+  Bash git status --short && git diff --stat HEAD | tail -20  
+  Grep skills  
+  Bash ls tools/ && grep -n "def _find_all_skills\|SKILLS\|skills_dir\|HERMES_HOME" tools/skills_tool.py | head -40  
+  Bash grep -n "skills" hermes_constants.py | head -30  
+  Bash grep -n "def get_external_skills_dirs\|def iter_skill_index_files\|EXTERNAL_SKILLS\|is_symlink\|resolve()\|rglob\|glob" agent/skill_utils.py | head -40  
+  Bash sed -n '483,580p' agent/skill_utils.py  
+  Bash cat .env 2>/dev/null; echo ---; grep -rn "HERMES_HOME" scripts/setup-znh-custom-branch.sh 2>/dev/null | head; ls scripts/ | head -40  
+  Read README.md  
+  Bash ls /mnt/z/pantheon/.hermes/ 2>/dev/null; echo ---; ls /mnt/z/pantheon/.hermes/skills/ 2>/dev/null  
+  Bash cd /mnt/z/pantheon/.hermes/skills && find . -name SKILL.md | sort > /tmp/opencode/home_skills.txt; wc -l /tmp/opencode/home_skills.txt  
+  Bash find skills optional-skills -name SKILL.md | sort > /tmp/opencode/repo_skills.txt; wc -l /tmp/opencode/repo_skills.txt  
+  Now let me inventory the live skills directory and compare it against the repo's bundled skills to identify bespoke ones.
+  Bash comm -23 <(sed 's|^\./||' /tmp/opencode/home_skills.txt | sort) <(sed 's|^skills/||;s|^optional-skills/||' /tmp/opencode/repo_skills.txt | sort)  
+  Bash grep -c . /tmp/opencode/home_skills.txt; comm -12 <(sed 's|^\./||' /tmp/opencode/home_skills.txt | sort) <(sed 's|^skills/||;s|^optional-skills/||' /tmp/o…  
+  Bash find skills optional-skills -maxdepth 2 -type d | grep -i "macos\|xlsx\|defuddle"; echo ---; ls optional-skills/mcp optional-skills/creative 2>/dev/null |…  
+  Bash grep -rl "macos-tools\|defuddle\|granola-meeting-filing\|tasknotes-board" skills optional-skills --include=SKILL.md | head  
+  Bash cd /mnt/z/pantheon/.hermes/skills && ls -la | head -25; echo ---; ls -la autonomous-ai-agents/ | head -20  
+  Bash cd /mnt/z/pantheon/.hermes/skills && cat .bundled_manifest  
+  Bash cd /mnt/z/pantheon/.hermes/skills && for f in $(find . -name SKILL.md -not -path './.archive/*' | sort); do dir=$(dirname "$f"); name=$(basename "$dir"); …  
+  Bash cd /mnt/z/pantheon/.hermes/skills && ls .hub/ && cat .curator_state 2>/dev/null | head -30; echo ---; find .hub -type f | head  
+  Bash cd /mnt/z/pantheon/.hermes/skills && cat .hub/taps.json .hub/lock.json 2>/dev/null | head -40; echo "=== audit tail ==="; tail -20 .hub/audit.log  
+  Bash cd /mnt/z/pantheon/.hermes/skills && for f in $(find . -name SKILL.md -not -path './.archive/*' | sort); do dir=$(dirname "$f"); name=$(basename "$dir"); …  0.6s 
+  Bash sed -n '1220,1280p' tools/skills_tool.py  
+  Bash sed -n '861,900p' agent/skill_utils.py  
+  All 60 bespoke skills are absent from the repo. Now let me check how the skills scanner handles symlinks and trust boundaries, since that determines the instal…
+  Bash grep -n -A8 "^skills:" /mnt/z/pantheon/.hermes/config.yaml | head -30; echo ===; ls /mnt/z/pantheon/.hermes/profiles/ 2>/dev/null  
+  Bash cd /mnt/z/pantheon/.hermes/skills && du -sh .archive; total=0; for f in $(find . -name SKILL.md -not -path './.archive/*' | sort); do dir=$(dirname "$f");…  
+  Bash grep -n "EXCLUDED_SKILL_DIRS\s*=" -A 25 agent/skill_utils.py | head -35  
+  Now let me check the live config, profiles, sizes, and secret-scan the bespoke skills before deciding the install mechanism.
+  Bash ls /mnt/z/pantheon/.hermes/profiles/opencode/ 2>/dev/null; echo ===; ls /mnt/z/pantheon/.hermes/profiles/opencode/skills 2>/dev/null | head  
+  Bash cd /mnt/z/pantheon/.hermes/skills && for f in $(find . -name SKILL.md -not -path './.archive/*'); do dir=$(dirname "$f"); name=$(basename "$dir"); grep -q…  
+  Bash cd /mnt/z/pantheon/.hermes/profiles/opencode/skills && ls -la | head -25; echo ===; find . -maxdepth 2 -name SKILL.md | head -30; echo ===; find . -name S…  
+  Bash cd /mnt/z/pantheon/.hermes/profiles/opencode/skills && for f in $(find . -name SKILL.md -not -path './.archive/*' | sort); do dir=$(dirname "$f"); name=$(…  
+  Bash diff -r /mnt/z/pantheon/.hermes/skills/productivity/petdex /mnt/z/pantheon/.hermes/profiles/opencode/skills/productivity/petdex > /dev/null && echo "petde…  
+  Bash cd /mnt/z/pantheon/.hermes/profiles/opencode/skills && du -sb apple/macos-computer-use data-science/jupyter-live-kernel devops/kanban-orchestrator devops/…  
+  The profile has its own bespoke skills. Let me check overlaps and config before finalizing the plan.
+  Critical design question: how the curator interacts with skills. Let me examine it.
+  Bash grep -rln "curator" --include="*.py" . 2>/dev/null | grep -v tests | grep -v ".venv" | head  
+  Bash grep -n "def \|external\|skills_dir\|SKILLS_DIR\|get_skills_dir\|archive\|os.walk\|rglob\|shutil\|rename" agent/curator.py | head -60  
+  Bash sed -n '700,776p' tools/skills_tool.py  
+  The curator explicitly excludes external-dir skills — that confirms `skills.external_dirs` as the right mechanism. Let me verify dedup across roots in the scan…
+  Bash cd /mnt/z/pantheon/.hermes/skills && find $(cat /tmp/opencode/bespoke_dirs.txt) .archive -type l 2>/dev/null | head; find $(cat /tmp/opencode/bespoke_dirs…  
+  Bash find $(cat /tmp/opencode/bespoke_dirs.txt) .archive -type f ! \( -name "*.md" -o -name "*.py" -o -name "*.sh" -o -name "*.yaml" -o -name "*.yml" -o -name …  
+  Dedup is by name, local-first. Let me check for nested symlinks, `.git`, binaries in the bespoke dirs, plus the archive layout and the stale home.
+  Bash cd /mnt/z/pantheon/.hermes/skills && find $(cat /tmp/opencode/bespoke_dirs.txt) .archive -type f ! \( -name "*.md" -o -name "*.py" -o -name "*.sh" -o -nam…  
+  Bash cd /home/znh/.hermes/skills 2>/dev/null && find . -name SKILL.md | wc -l; ls -la /home/znh/.hermes/skills/.bundled_manifest 2>/dev/null; diff <(ls -R /hom…  
+  Bash ls -la /home/znh/.hermes 2>/dev/null | head -3; readlink /home/znh/.hermes; stat -c '%d' /home/znh/.hermes /mnt/z/pantheon/.hermes 2>/dev/null  
+  Grep _get_category_from_path  
+  Bash find /mnt/z/pantheon/.pantheon/agent_context/skills -name SKILL.md 2>/dev/null | sed 's|.*/skills/||' | head -20; echo ===; ls /mnt/z/pantheon/.pantheon/a…  
+  Bash grep -n "znh-plugins" AGENTS.md docs/*.md 2>/dev/null | head  
+  Bash sed -n '562,600p' tools/skills_tool.py  
+  Todowrite 10 todos  
+  All design questions resolved. Setting up the plan:
+  Bash cd /mnt/z/pantheon/.hermes/skills && while read -r dir; do name=$(basename "$dir"); grep -q "^${name}:" .bundled_manifest && continue || true; done < /dev…  
+  Bash mkdir -p /mnt/z/pantheon/projects/silver-hermes/tasks/004-track-bespoke-skills-as-znh-skills-in-the-fork/znh-skills/archive && cp -a /mnt/z/pantheon/.herm…  
+  Bash cd /mnt/z/pantheon/.hermes/profiles/opencode/skills && mkdir -p /mnt/z/pantheon/projects/silver-hermes/tasks/004-track-bespoke-skills-as-znh-skills-in-the…  
+  Bash cd /mnt/z/pantheon/projects/silver-hermes/tasks/004-track-bespoke-skills-as-znh-skills-in-the-fork/znh-skills && find . -type d -name __pycache__ -exec rm…  
+  Bash cd /mnt/z/pantheon/.hermes/profiles/opencode/skills && for dir in apple/macos-computer-use data-science/jupyter-live-kernel devops/kanban-orchestrator dev…  
+  Read install.sh  
+  All copies byte-verified. Now the installer — let me match the znh-plugins style:
+  Write install.sh  20s 
+  Write install.sh  
+  The PyYAML rewrite would destroy comments in config.yaml. Let me replace with a surgical line-based patcher:
+  Bash chmod +x znh-skills/install.sh && bash -n znh-skills/install.sh && echo "syntax OK"  
+  Bash mkdir -p /tmp/opencode/cfgtest/skills /tmp/opencode/cfgtest/profiles/opencode && cp /mnt/z/pantheon/.hermes/config.yaml /tmp/opencode/cfgtest/config.yaml …  
+  Bash diff /mnt/z/pantheon/.hermes/config.yaml /tmp/opencode/cfgtest/config.yaml; echo ---; diff /mnt/z/pantheon/.hermes/profiles/opencode/config.yaml /tmp/open…  
+  Bash ls -la /mnt/z/pantheon/.hermes/plugins/ | head -12  
+  The installed path points at this task worktree, which vanishes after merge. Let me check how znh-plugins handles this:
+  Bash cd /mnt/z/pantheon/.hermes/hermes-agent && git rev-parse --abbrev-ref HEAD 2>/dev/null; git remote -v 2>/dev/null | head -2; ls znh-plugins znh-skills 2>/…  
+  Key insight: config registration must point at the canonical checkout (`/mnt/z/pantheon/.hermes/hermes-agent/`), like znh-plugins — so live registration happen…
+  Bash rm -rf /tmp/opencode/cfgtest2 && mkdir -p /tmp/opencode/cfgtest2/skills && printf 'model: test\n' > /tmp/opencode/cfgtest2/config.yaml && HERMES_HOME=/tmp…  
+  Bash printf 'model: test\nskills:\n disabled:\n - foo\n' > /tmp/opencode/cfgtest2/config.yaml && HERMES_HOME=/tmp/opencode/cfgtest2 bash znh-skills/install.sh …  
+  Write README.md  
+  Installer solid. Now the README:
+  Edit README.md  
+  Now the end-to-end discovery verification — reversible config patch on the live home, scan with hermes' own `_find_all_skills`, then revert:
+  Bash cp /mnt/z/pantheon/.hermes/config.yaml /tmp/opencode/config.yaml.before && HERMES_HOME=/mnt/z/pantheon/.hermes bash znh-skills/install.sh; echo "exit=$?";…  
+  Bash HERMES_HOME=/mnt/z/pantheon/.hermes uv run python - <<'PY' 2>&1 | tail -30 import logging logging.basicConfig(level=logging.WARNING) from pathlib import P…  
+  Bash cd /mnt/z/pantheon/.hermes/hermes-agent && ls .venv/bin/python 2>/dev/null; ls data/nerdfonts/glyphnames.json 2>/dev/null && echo has-data  
+  Bash cd /mnt/z/pantheon/.hermes/hermes-agent && HERMES_HOME=/mnt/z/pantheon/.hermes .venv/bin/python - <<'PY' 2>&1 | tail -35 import logging logging.basicConfi…  
+  Bash grep -n -A 15 "disabled" /mnt/z/pantheon/.hermes/config.yaml | grep -A 15 "skills" | head -20; cd /mnt/z/pantheon/.hermes/hermes-agent && HERMES_HOME=/mnt…  
+  Bash for s in apple/macos-tools devops/kanban devops/sdlc-review; do echo "=== $s"; sed -n '1,15p' "/mnt/z/pantheon/.hermes/skills/$s/SKILL.md"; done  
+  Bash cd /mnt/z/pantheon/.hermes/hermes-agent && HERMES_HOME=/mnt/z/pantheon/.hermes HERMES_ENVIRONMENT=kanban .venv/bin/python - <<'PY' from tools.skills_tool …  
+  Bash grep -n "def skill_view\|@registry\|name=\"skill" tools/skills_tool.py | head  
+  Bash cd /mnt/z/pantheon/.hermes/hermes-agent && HERMES_HOME=/mnt/z/pantheon/.hermes .venv/bin/python - <<'PY' import json, logging warnings = [] h = logging.Ha…  
+  Bash cd /mnt/z/pantheon/.hermes/hermes-agent && HERMES_HOME=/mnt/z/pantheon/.hermes .venv/bin/python - <<'PY' import json, logging warnings = [] h = logging.Ha…  
+  Bash set -e cp /tmp/opencode/config.yaml.before /mnt/z/pantheon/.hermes/config.yaml cp /mnt/z/pantheon/.hermes/profiles/opencode/config.yaml.bak-znh-skills /mn…  
+  Bash grep -n "zn" /mnt/z/pantheon/.hermes/config.yaml  
+  Edit README.md  
+  Live system restored (the one `zn` match is pre-existing). Now refine the README with the ambiguity-window warning and ordered runbook:
+  Bash ls tests/ | head; echo ===; sed -n '1,40p' tests/plugins/test_opencode_worker_herdr.py 2>/dev/null  
+  Now the layout test. Let me check test conventions first:
+  Bash ls tests/plugins/ 2>/dev/null; grep -rn "yaml" pyproject.toml | grep -i "pyyaml\|yaml" | head -3  
+  Write test_znh_skills_layout.py  
+  Bash touch tests/znh/__init__.py && uv run pytest tests/znh/test_znh_skills_layout.py -q 2>&1 | tail -15  
+  Bash .venv/bin/python -m pytest tests/znh/test_znh_skills_layout.py -q 2>&1 | tail -8 || echo "venv pytest missing"; ls .venv/bin/ | grep -i pytest  
+  Bash grep -n "pytest\|test" pyproject.toml | grep -in "pytest\|group" | head; ls .venv/lib/python3.12/site-packages/ | head -30  
+  Bash uv sync --group dev 2>&1 | tail -5  
+  Bash grep -n "dependency-groups" -A 5 pyproject.toml | head -12; grep -n "\[project.optional-dependencies\]" -A 6 pyproject.toml | head -10; grep -n "^dev\|dev…  
+  Bash uv sync --extra dev 2>&1 | tail -3 && .venv/bin/python -m pytest tests/znh/test_znh_skills_layout.py -q 2>&1 | tail -8  
+  Edit test_znh_skills_layout.py  
+  Bash .venv/bin/python -m pytest tests/znh/test_znh_skills_layout.py -q 2>&1 | tail -3; uvx ruff check tests/znh/ && uvx ruff format --check tests/znh/ 2>&1 | t…  
+  Bash .venv/bin/python -m pytest tests/znh/test_znh_skills_layout.py::test_skill_dir_matches_frontmatter_name -q 2>&1 | grep -A6 "AssertionError\|!=" | head -20  
+  Edit test_znh_skills_layout.py  
+  Pre-existing mismatch in the profile root (`mlops/models/audiocraft` named `audiocraft-audio-generation` inside). Let me exempt it explicitly rather than weake…
+  Read test_znh_skills_layout.py  
+  Edit test_znh_skills_layout.py  
+  Bash .venv/bin/python -m pytest tests/znh/test_znh_skills_layout.py -q 2>&1 | tail -2 && uvx ruff format tests/znh/ && uvx ruff check tests/znh/  
+  Bash .venv/bin/python -m pytest tests/znh/test_znh_skills_layout.py::test_skill_dir_matches_frontmatter_name -q 2>&1 | grep -E "AssertionError|assert" | head -5  
+  Bash .venv/bin/python - <<'PY' import re from pathlib import Path import yaml root = Path("znh-skills") FM = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL) for …  
+  Edit test_znh_skills_layout.py  
+      ⤷ Could not find oldString in the file. It must match exactly, including whitespace, indentation, and line endings.
+  Bash grep -n -B2 -A4 "_NAME_MISMATCH_EXEMPT = " tests/znh/test_znh_skills_layout.py  
+  Read test_znh_skills_layout.py  
+  Edit test_znh_skills_layout.py  
+  Bash .venv/bin/python -m pytest tests/znh/test_znh_skills_layout.py -q 2>&1 | tail -2 && uvx ruff check tests/znh/ && uvx ruff format --check tests/znh/  
+  Todowrite 3 todos  
+  Bash grep -n -A8 "tool.pytest.ini_options" pyproject.toml; echo ===; git check-ignore znh-skills/skills/devops/kanban/SKILL.md znh-skills/archive znh-skills/pr…  
+  Bash pantheon dashboard 2>&1 | tail -20  
+  Bash pantheon dashboard 2>&1 | grep -B3 -A12 "004-track\|FUEL\|fuel" | head -40  
+  Bash pantheon task update --size M --status active 2>&1 | tail -2; pantheon task update --step "Captured skills, installer, README, tests; verifying" --progres…  
+  Bash pantheon task check 2>&1 | tail -40  
+  Bash git ls-files data | head -3; ls data 2>/dev/null || echo "no data dir"; grep -rn "glyphnames" .gitignore 2>/dev/null; find . -maxdepth 2 -name "*.json" -p…  
+  The errors are collection-time `FileNotFoundError`s — likely the same missing generated `data/` asset. Let me confirm it's pre-existing, not caused by my chang…
+  Bash .venv/bin/python -m pytest tests/tools/test_vision_tools.py -q 2>&1 | grep "FileNotFoundError" | head -3  
+  Bash grep -rn "glyphnames" --include="*.py" --include="*.sh" --include="*.toml" . 2>/dev/null | grep -v tests | grep -v "\.venv" | head  
+  Bash git ls-files | grep -i glyp; echo "---runtime---"; cd /mnt/z/pantheon/.hermes/hermes-agent && git ls-files data/ | head -3; git status --short data/ | hea…  
+  Bash du -sh /mnt/z/pantheon/.hermes/hermes-agent/data; cd /mnt/z/pantheon/.hermes/hermes-agent && git check-ignore data && echo "data ignored" || echo "data NO…  
+  Bash cp -r /mnt/z/pantheon/.hermes/hermes-agent/data data && pantheon task check 2>&1 | tail -15  
+  Bash .venv/bin/python -m pytest tests/gateway/test_raft_adapter.py -q 2>&1 | grep -B2 -A8 "ERROR\|Error" | head -30  
+  Bash grep -n "aiohttp" pyproject.toml | head -5  
+  Bash cd /mnt/z/pantheon/.hermes/hermes-agent && .venv/bin/python -c "import aiohttp, sys; print(aiohttp.__version__)"; uv pip list 2>/dev/null | grep -i "aioht…  
+  Bash cd /mnt/z/pantheon/.hermes/hermes-agent && HERMES_HOME=/mnt/z/pantheon/.hermes .venv/bin/python -m pytest tests/gateway/test_raft_adapter.py -q 2>&1 | tai…  
+  Bash grep -n "^\[project.optional-dependencies\]" -A 120 pyproject.toml | grep -E "^[0-9]+:[a-z-]+ =" | sed 's/.*:\([a-z-]*\) =.*/\1/' | tr '\n' ' '  
+  Bash ls /mnt/z/pantheon/.hermes/hermes-agent/.venv/lib/python3.12/site-packages/ | grep -iE "^torch|^triton|^nvidia" | head -3; du -sh /mnt/z/pantheon/.hermes/…  
+  Bash sed -n '147,240p' pyproject.toml | grep -oE "^[a-z0-9_-]+(?= =)" | tr '\n' ' '  
+  Bash sed -n '147,240p' pyproject.toml | grep -E "^[a-z0-9_-]+ =" | sed 's/ =.*//' | tr '\n' ' '  
+  Bash uv sync --extra dev --extra messaging --extra cron --extra slack --extra matrix --extra wecom --extra homeassistant --extra teams --extra sms 2>&1 | tail …  
+  Bash .venv/bin/python -m pytest tests/gateway tests/integration -q --collect-only 2>&1 | tail -5  
+  Bash pantheon task check 2>&1 | tail -12  
+  Bash .venv/bin/python -m pytest tests/acp/test_server.py -q 2>&1 | grep -E "ModuleNotFoundError|ImportError" | head -3  
+  Bash grep -n -i '"acp\|agent-client-protocol\|acp==' pyproject.toml uv.lock | head -5; ls /mnt/z/pantheon/.hermes/hermes-agent/.venv/../ 2>/dev/null | head -2;…  
+  Bash uv sync --extra acp 2>&1 | tail -2 && pantheon task check 2>&1 | tail -10  
+  `uv sync --extra acp` clobbered the other extras. Re-sync everything, then inspect gates individually:
+  Bash uv sync --extra dev --extra messaging --extra cron --extra slack --extra matrix --extra wecom --extra homeassistant --extra teams --extra sms --extra acp …  
+  Bash pantheon task check 2>&1 | tee /tmp/opencode/check.log | tail -30  
+  Bash grep -n -A15 "tests/znh/test_znh_skills_layout.py::test_active_roots" /tmp/opencode/check.log | head -30  
+  Bash grep -n "znh" /tmp/opencode/check.log | grep -iv "ERROR tests/znh" | head; grep -c "^ERROR\|^FAILED" /tmp/opencode/check.log; grep -n "FAILED tests/znh\|E…  
+  Bash sed -n '1,22p' /tmp/opencode/check.log; echo ===; grep -n "errors in\|failed," /tmp/opencode/check.log | tail -3; grep -n -B3 -A10 "_local_skills" /tmp/op…  
+  Bash grep -n "FileNotFoundError\|ModuleNotFoundError\|RuntimeError" /tmp/opencode/check.log | head; grep -rn "task check" /mnt/z/pantheon/.pantheon 2>/dev/null…  
+  Bash grep -rn "quality" ~/.local/bin/pantheon 2>/dev/null | head -3; file ~/.local/bin/pantheon; grep -rln "Running Quality Checks" /mnt/z/pantheon/.pantheon/ …  
+  Bash grep -rln "Quality Checks\|def check" /mnt/z/pantheon/.pantheon/agent_context/scripts/*.py 2>/dev/null | head; ls /mnt/z/pantheon/.pantheon/agent_context/…  
+  Bash grep -rln "task_check\|task check\|quality_gate" /home/znh/.local/bin/pantheon* /home/znh/.local/lib/python3*/site-packages/pantheon* 2>/dev/null | head; …  
+  Bash grep -n "pytest\|ruff\|\bty\b" /mnt/z/pantheon/.pantheon/agent_context/scripts/pantheon_init.py | head -20  
+  Bash git status --short | head -20; git diff --stat | tail -5  
+  Let me check git status for ruff --fix / format mutations, and reproduce my test error via `uv run pytest`:
+  Bash uv run pytest tests/znh -q 2>&1 | tail -5  
+  Bash grep -n "subprocess\|sys.executable\|isolation\|Popen\|run(" tests/conftest.py | head -20  
+  Bash grep -n -B3 -A20 "python -m pytest\|sys.executable.*pytest\|spawn" tests/conftest.py | sed -n '1,40p'; ls scripts/run_tests_parallel.py 2>/dev/null && gre…  
+  The per-file isolation runner (`scripts/run_tests_parallel.py`) is this repo's real test entry point — plain `uv run pytest` is repo-incompatible (16185 errors…
+  Bash git checkout -- znh-plugins/ && git status --short | head; grep -n -B2 -A10 "extend-exclude\|\[tool.ruff\]" pyproject.toml | head -30  
+  Bash sed -n '402,430p' pyproject.toml  
+  Edit pyproject.toml  
+  Edit pyproject.toml  
+  Bash uvx --quiet ruff check 2>&1 | tail -3; uvx --quiet ruff format --check 2>&1 | tail -2; git status --short | head -8  
+  Bash sed -n '470,560p' /mnt/z/pantheon/.pantheon/agent_context/scripts/pantheon_init.py  
+  Bash grep -n "_format_paths_for" -A 20 /mnt/z/pantheon/.pantheon/agent_context/scripts/pantheon_init.py | head -30  
+  Bash python3 - <<'PY' import re text = open('/mnt/z/pantheon/.pantheon/agent_context/scripts/pantheon_init.py').read() i = text.find('def _format_paths_for') p…  
+  Bash grep -n "format_paths\|\"name\": \"silver-hermes\"\|'silver-hermes'" /mnt/z/pantheon/.pantheon/registry.json 2>/dev/null | head; ls /mnt/z/pantheon/.panth…  
+  Bash cd /mnt/z/pantheon/.hermes/hermes-agent && uv run pytest tests/website/test_generate_skill_docs.py tests/cron -q 2>&1 | tail -3  
+  Bash ls tests/agent/ | grep -i "skill\|curator"; ls tests/tools/ | grep -i skill | head  
+  Baseline confirmed: plain `uv run pytest` is red even in the pristine runtime checkout. Now the repo-native runner on my tests plus all skill-related suites:
+  Bash .venv/bin/python scripts/run_tests_parallel.py tests/znh tests/agent/test_external_skills.py tests/agent/test_external_skills_dirs_cache.py tests/agent/te…  
+  Bash .venv/bin/python scripts/run_tests_parallel.py tests/znh tests/agent/test_external_skills.py tests/agent/test_external_skills_dirs_cache.py tests/agent/te…  
+  Bash uvx --quiet ty check 2>&1 | tail -5  
+  Bash uvx ty check 2>&1 | grep -oE "^[a-z_-]+\[[a-z-]+\]|--> [^ :]+" 2>/dev/null | grep "tests/znh\|znh-skills" | head; uvx ty check 2>&1 | grep -cE "^(error|wa…  
+  Bash ls .ruff_cache 2>/dev/null || find . -maxdepth 2 -name "ty.toml" -o -maxdepth 2 -name ".ty*" 2>/dev/null | head -3; grep -n "\[tool.ty" -A 20 pyproject.to…  
+  Edit pyproject.toml  
+  Bash uvx ty check 2>&1 | grep -cE "znh-skills|znh-plugins|tests/znh"; uvx ty check 2>&1 | tail -1  
+  Bash uvx ty check 2>&1 | grep -E "znh-skills|znh-plugins|tests/znh" | head -5  0.7s 
+  Bash uvx ty check 2>&1 | grep -E "^(error|warning)" -A1 | grep -- "-->" | grep -E "znh-plugins|znh-skills|tests/znh" | head -3; echo "---none-if-empty---"  
+  Bash .venv/bin/python scripts/run_tests_parallel.py tests/website/test_generate_skill_docs.py tests/agent tests/plugins/test_opencode_worker_herdr.py tests/too…  
+  Bash .venv/bin/python scripts/run_tests_parallel.py tests/website/test_generate_skill_docs.py tests/agent tests/plugins/test_opencode_worker_herdr.py tests/too…  
+  Bash .venv/bin/python scripts/run_tests_parallel.py tests/website/test_generate_skill_docs.py tests/agent tests/plugins/test_opencode_worker_herdr.py tests/too…  2m27s 
+  Bash .venv/bin/python scripts/run_tests_parallel.py tests/agent 2>&1 | grep -B2 "✗" | grep -E "\.py" | head; echo ---; .venv/bin/python scripts/run_tests_paral…  
+  Bash cd /mnt/z/pantheon/.hermes/hermes-agent && .venv/bin/python scripts/run_tests_parallel.py tests/agent/test_display_todo_progress.py tests/agent/test_syste…  
+  Bash .venv/bin/python -m pytest tests/agent/test_vision_routing_31179.py tests/agent/test_auxiliary_named_custom_providers.py -q 2>&1 | grep -E "Error|error" |…  
+  Bash cd /mnt/z/pantheon/projects/silver-hermes/tasks/004-track-bespoke-skills-as-znh-skills-in-the-fork && uv pip list 2>/dev/null | grep -i "^anthropic\|^open…  
+  Bash grep "^<" /tmp/opencode/diff 2>/dev/null; diff /tmp/opencode/rt.txt /tmp/opencode/wt.txt | grep "^<" | grep -iE "torch|faster-whisper|transformers|onnx" |…  
+  Bash cd /mnt/z/pantheon/.hermes/skills && while read -r d; do rel="${d#./}"; diff -r --exclude=__pycache__ "$d" "/mnt/z/pantheon/projects/silver-hermes/tasks/0…  
+  Bash while read -r d; do rel="${d#./}"; dest="/mnt/z/pantheon/projects/silver-hermes/tasks/004-track-bespoke-skills-as-znh-skills-in-the-fork/znh-skills/skills…  
+  The earlier gate run's `ruff format` mutated captured skills. Restoring byte-fidelity from the live homes (now protected by extend-exclude):
+  Bash RT=/mnt/z/pantheon/projects/silver-hermes/tasks/004-track-bespoke-skills-as-znh-skills-in-the-fork/znh-skills/profiles/opencode; for dir in apple/macos-co…  
+  The main re-copy ran from the wrong cwd — `rm -rf` executed but `cp` failed. Re-copying properly:
+  Bash while read -r d; do rel="${d#./}"; dest="/mnt/z/pantheon/projects/silver-hermes/tasks/004-track-bespoke-skills-as-znh-skills-in-the-fork/znh-skills/skills…  
+  Bash while read -r d; do rel="${d#./}"; diff -r --exclude=__pycache__ "$d" "/mnt/z/pantheon/projects/silver-hermes/tasks/004-track-bespoke-skills-as-znh-skills…  
+  All 81 captured skills byte-identical again. Now prove the exclusion makes the gate's ruff step a no-op on captured content:
+  Bash uvx --quiet ruff check --fix . 2>&1 | tail -2; uvx --quiet ruff format . 2>&1 | tail -1; uvx --quiet ruff check 2>&1 | tail -1; git status --short | grep …  
+  Bash git diff pyproject.toml > /tmp/opencode/pyproject.patch && git checkout -- . && git apply /tmp/opencode/pyproject.patch && git status --short | grep -v "^…  
+  Bash while read -r d; do rel="${d#./}"; diff -r --exclude=__pycache__ "$d" "/mnt/z/pantheon/projects/silver-hermes/tasks/004-track-bespoke-skills-as-znh-skills…  
+  Bash python3 - <<'PY' import sys sys.path.insert(0, '/mnt/z/pantheon/.pantheon/agent_context') from scripts.pantheon_init import load_registry, _detect_project…  
+  Bash /home/znh/.local/share/uv/tools/pantheon/bin/python3 - <<'PY' import sys sys.path.insert(0, '/mnt/z/pantheon/.pantheon/agent_context') from scripts.panthe…  
+  Bash pantheon task check 2>&1 | tee /tmp/opencode/check2.log | tail -8  
+  Bash grep -E "Ruff|ty|pytest" /tmp/opencode/check2.log | head -8; grep -n "✓\|✗" /tmp/opencode/check2.log | head -6; git status --short | grep -v "^??"  
+  Bash while read -r d; do rel="${d#./}"; diff -r --exclude=__pycache__ "$d" "/mnt/z/pantheon/projects/silver-hermes/tasks/004-track-bespoke-skills-as-znh-skills…  
+  Edit pyproject.toml  
+  Bash git checkout -- znh-plugins/ && while read -r d; do rel="${d#./}"; dest="/mnt/z/pantheon/projects/silver-hermes/tasks/004-track-bespoke-skills-as-znh-skil…  
+  Bash git checkout -- znh-plugins/ && git status --short | grep -v "^??"; RT=znh-skills/profiles/opencode; for dir in apple/macos-computer-use data-science/jupy…  
+  Bash for dir in apple/macos-computer-use data-science/jupyter-live-kernel devops/kanban-orchestrator devops/kanban-worker hermes-skin-customization media/heart…  
+  Bash uvx --quiet ruff check --fix znh-plugins/ znh-skills/ 2>&1 | tail -1; uvx --quiet ruff format znh-plugins/ znh-skills/ 2>&1 | tail -2; uvx --quiet ruff ch…  
+  Bash diff /tmp/opencode/config.yaml.before /mnt/z/pantheon/.hermes/config.yaml && echo "main config byte-identical to pre-task"; grep -c "znh-skills" /mnt/z/pa…  
+  Bash .venv/bin/python scripts/run_tests_parallel.py tests/znh 2>&1 | tail -2 && uvx --quiet ruff check tests/znh/ && uvx --quiet ruff format --check tests/znh/  
+  Gate-side protection confirmed. Final live-system and test verification:
+  Bash .venv/bin/python scripts/run_tests_parallel.py tests/znh 2>&1 | grep -E "Summary|✓|" | tail -3  
+  Bash .venv/bin/python scripts/run_tests_parallel.py tests/znh 2>&1 | grep -E "passed|failed"  
+  Todowrite 1 todos  
+  Bash git add pyproject.toml znh-skills tests/znh && git status --short | head -10 && git diff --cached --stat | tail -5  
+  Bash git commit -m "$(cat <<'EOF' Capture Zack's bespoke Hermes skills in the fork as znh-skills/ Same problem as the znh-plugins capture (cc5a471fcd): 60 besp…  
+  Bash pantheon task update --step "Committed capture + installer + tests + lint exclusions" --progress 95 2>&1 | tail -1; pantheon task finish 2>&1 | tail -15  
+  Read 004-track-bespoke-skills-as-znh-skills-in-the-fork-TASK-BRIEF.md  
+  Edit 004-track-bespoke-skills-as-znh-skills-in-the-fork-TASK-BRIEF.md  
+  Edit 004-track-bespoke-skills-as-znh-skills-in-the-fork-TASK-BRIEF.md  
+  Bash git status --short | head -5; git add 004-track-bespoke-skills-as-znh-skills-in-the-fork-TASK-BRIEF.md && git commit -m "docs(task-004): mark task brief s…  
