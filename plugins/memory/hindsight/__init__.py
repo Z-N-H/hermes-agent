@@ -90,6 +90,28 @@ _HINDSIGHT_GLYPH = "👁️"
 # unique document_id fallback for older APIs.
 _MIN_VERSION_FOR_UPDATE_MODE_APPEND = "0.5.0"
 _VALID_BUDGETS = {"low", "mid", "high"}
+
+# znh/custom: vault note uids are always OBSD + 6 base62 chars. A recalled
+# memory that came from a vault note cites its source so any agent can open
+# the note with vault_lookup.py — see vault/ZNH/scripts/vault_hindsight.py.
+import re as _re
+_VAULT_UID_RE = _re.compile(r"^OBSD[0-9A-Za-z]{6}$")
+
+
+def _uid_citation(r) -> str:
+    """` [uid:OBSDxxxxxx]` suffix for a recall result from a vault note, else ""."""
+    for tag in getattr(r, "tags", None) or []:
+        if isinstance(tag, str) and tag.startswith("note:") and _VAULT_UID_RE.match(tag[5:]):
+            return f" [uid:{tag[5:]}]"
+    metadata = getattr(r, "metadata", None) or {}
+    if metadata.get("source") == "vault":
+        uid = str(metadata.get("uid", ""))
+        if _VAULT_UID_RE.match(uid):
+            return f" [uid:{uid}]"
+        document_id = str(getattr(r, "document_id", "") or "")
+        if _VAULT_UID_RE.match(document_id):
+            return f" [uid:{document_id}]"
+    return ""
 _PROVIDER_DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5",
@@ -2000,7 +2022,9 @@ class HindsightMemoryProvider(MemoryProvider):
             resp = self._run_hindsight_operation(lambda client: client.arecall(**recall_kwargs))
             num_results = len(resp.results) if resp.results else 0
             logger.debug("Recall: returned %d results", num_results)
-            text = "\n".join(f"- {r.text}" for r in resp.results if r.text) if resp.results else ""
+            text = "\n".join(
+                f"- {r.text}{_uid_citation(r)}" for r in resp.results if r.text
+            ) if resp.results else ""
             return _RecallResult(text, num_results)
         except Exception as e:
             logger.debug("Hindsight recall failed: %s", e, exc_info=True)
@@ -2344,7 +2368,10 @@ class HindsightMemoryProvider(MemoryProvider):
                 logger.debug("Tool hindsight_recall: %d results", num_results)
                 if not resp.results:
                     return json.dumps({"result": "No relevant memories found."})
-                lines = [f"{i}. {r.text}" for i, r in enumerate(resp.results, 1)]
+                lines = [
+                    f"{i}. {r.text}{_uid_citation(r)}"
+                    for i, r in enumerate(resp.results, 1)
+                ]
                 return json.dumps({"result": "\n".join(lines)})
             except Exception as e:
                 logger.warning("hindsight_recall failed: %s", e, exc_info=True)

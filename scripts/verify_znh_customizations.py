@@ -92,6 +92,13 @@ CHECKS: list[Check] = [
     Check("hermes_cli/cli_billing_mixin.py uses get_active_brand_icon", "hermes_cli/cli_billing_mixin.py",
           r"get_active_brand_icon\(\)", min_count=3),
 
+    # --- uid citations on vault-sourced recall (hindsight memory plugin) ---
+    Check("hindsight plugin: _uid_citation helper present", "plugins/memory/hindsight/__init__.py",
+          r"def _uid_citation\("),
+    Check("hindsight plugin: citations applied in prefetch AND tool recall",
+          "plugins/memory/hindsight/__init__.py",
+          r"_uid_citation\(r\)", min_count=2),
+
     # --- Other known custom commits (lighter existence checks) ---
     Check("Phoenix observability plugin present", "plugins/observability/phoenix/__init__.py",
           r"def register"),

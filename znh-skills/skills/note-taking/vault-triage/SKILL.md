@@ -60,7 +60,7 @@ Do all of:
 2. Add frontmatter matching the **live** convention (kebab-case, not the
    older snake_case in `Schemas.md`):
    ```yaml
-   type: research          # client | project | decision | meeting | research | note | braindump
+   type: research          # client | project | decision | meeting | research | note | braindump | playbook
    title: ...
    date: YYYY-MM-DD
    status: active          # the DOCUMENT's lifecycle — never the triage state
@@ -72,9 +72,11 @@ Do all of:
      - "[[Some Other Note]]"
    ```
    Leave `uid:` alone — it's already there and it's the note's address.
-3. `hindsight_retain` the substance, with tags from: `client`, `decision`,
-   `research`, `reference`. Include the note's uid in the memory text so the
-   memory points back at its source.
+3. Do **not** retain anything to Hindsight yourself. The watcher's memory
+   lane (`vault_hindsight.py`, driven by `trigger_scanner.py`) owns every
+   vault → Hindsight write: once the note is filed it ingests the note keyed
+   by its `uid`, replaces on edit, and deletes on removal. A manual
+   `hindsight_retain` here would make two writers for the same memory.
 4. Set `triage: done`. Leave `processed_at`/`processed_hash` alone — the
    runner writes those itself, with a real clock.
 
@@ -351,7 +353,7 @@ Reply with one line per action actually taken. Nothing else — no preamble, no
 restating the note.
 
 ```
-filed    Acme pricing feedback -> Clients/Acme Corp/  (hindsight: client, reference)
+filed    Acme pricing feedback -> Clients/Acme Corp/
 carded   Chase UOWN invoice     -> open, due 2026-07-30
 triage   Broken contex          -> needs your call: which project?
 ```
@@ -396,8 +398,6 @@ Pitfalls
   and links; don't move it.
 - **Don't invent clients.** If the client name isn't in `Clients/`, it's
   category D, not a new folder.
-- **Don't retain low-value memories.** "Zack wrote a note about testing" is
-  noise. Retain substance or nothing.
 - **One note, one pass.** You are invoked per note (watcher path) or given a
   batch in a single session (cron path). In either case, only act on the notes
   you were given — don't go hunting through the rest of the inbox.
