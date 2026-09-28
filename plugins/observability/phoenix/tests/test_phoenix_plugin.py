@@ -604,3 +604,139 @@ class TestPhoenixToolCallSpanContext:
         phoenix.on_post_tool_call(tool_name="opencode", tool_call_id="tc-2", status="ok")
 
         assert phoenix.get_span_context_for_tool_call("tc-2", "opencode") is None
+
+
+# Captured live from `opencode run --format json` (OpenCode 1.18.25),
+# `opencode run --format json "read the file sample.txt in this directory
+# and tell me its contents"` against a one-line sample.txt. Undocumented
+# event shape — see record_opencode_run's docstring. Two steps: one
+# tool-calling step (reads the file) and one text-only step (reports back).
+OPENCODE_SAMPLE_NDJSON = """
+{"type":"step_start","timestamp":1790616253291,"sessionID":"ses_f16f45a38ffeEG5l2u2iClVxjl","part":{"id":"prt_0e90bb36600150UbUyqdAxfGnJ","messageID":"msg_0e90ba771001R4HQN6myynWau3","sessionID":"ses_f16f45a38ffeEG5l2u2iClVxjl","snapshot":"53da05e8154ba7f0d6cc854bc3dc2049f8ca9e34","type":"step-start"}}
+{"type":"tool_use","timestamp":1790616253809,"sessionID":"ses_f16f45a38ffeEG5l2u2iClVxjl","part":{"type":"tool","tool":"read","callID":"read:0","state":{"status":"completed","input":{"filePath":"/tmp/opencode-format-probe/sample.txt"},"output":"<path>/tmp/opencode-format-probe/sample.txt</path>\\n<type>file</type>\\n<content>\\n1: hello world\\n\\n(End of file - total 1 lines)\\n</content>","metadata":{"preview":"hello world","truncated":false,"loaded":[],"display":{"type":"file","path":"/tmp/opencode-format-probe/sample.txt","text":"hello world","lineStart":1,"lineEnd":1,"totalLines":1,"truncated":false}},"title":"sample.txt","time":{"start":1790616253799,"end":1790616253807}},"id":"prt_0e90bb561001DpH8N8dZOWQwe5","sessionID":"ses_f16f45a38ffeEG5l2u2iClVxjl","messageID":"msg_0e90ba771001R4HQN6myynWau3"}}
+{"type":"step_finish","timestamp":1790616253896,"sessionID":"ses_f16f45a38ffeEG5l2u2iClVxjl","part":{"id":"prt_0e90bb5c30018xGPd1wDSWVDHL","reason":"tool-calls","snapshot":"0fe8fc481e835ea4d1ab540a59fa2a18e4a5ab37","messageID":"msg_0e90ba771001R4HQN6myynWau3","sessionID":"ses_f16f45a38ffeEG5l2u2iClVxjl","type":"step-finish","tokens":{"total":17105,"input":53,"output":92,"reasoning":0,"cache":{"write":0,"read":16960}},"cost":0.009171}}
+{"type":"step_start","timestamp":1790616256896,"sessionID":"ses_f16f45a38ffeEG5l2u2iClVxjl","part":{"id":"prt_0e90bc17a0011E6qgmih0l0v1b","messageID":"msg_0e90bb5e3001ACFSDjOI6j3ZhP","sessionID":"ses_f16f45a38ffeEG5l2u2iClVxjl","snapshot":"a2d49b87209477d4bbd845edcf2066aab0f8799d","type":"step-start"}}
+{"type":"text","timestamp":1790616257135,"sessionID":"ses_f16f45a38ffeEG5l2u2iClVxjl","part":{"id":"prt_0e90bc1f2001U956uNfe7W5k9I","messageID":"msg_0e90bb5e3001ACFSDjOI6j3ZhP","sessionID":"ses_f16f45a38ffeEG5l2u2iClVxjl","type":"text","text":"`sample.txt` contains:\\n\\n```text\\nhello world\\n```","time":{"start":1790616257010,"end":1790616257131}}}
+{"type":"step_finish","timestamp":1790616257159,"sessionID":"ses_f16f45a38ffeEG5l2u2iClVxjl","part":{"id":"prt_0e90bc284001e78g20IQHUsz9z","reason":"stop","snapshot":"f3ad9c9ee8ce1e9a7d7c8878e6452d8b95f19833","messageID":"msg_0e90bb5e3001ACFSDjOI6j3ZhP","sessionID":"ses_f16f45a38ffeEG5l2u2iClVxjl","type":"step-finish","tokens":{"total":17220,"input":17179,"output":41,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0.052152}}
+""".strip()
+
+
+class TestRecordOpencodeRun:
+    """record_opencode_run() parses opencode run --format json NDJSON,
+    emits spans nested under the delegating tool call, and returns
+    reconstructed text for the agent to see in place of raw NDJSON."""
+
+    def _fresh_tracer(self):
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider(resource=Resource.create({"service.name": "test"}))
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        return provider.get_tracer("test"), exporter
+
+    def setup_method(self):
+        import plugins.observability.phoenix as phoenix
+
+        self.phoenix = phoenix
+        tracer, exporter = self._fresh_tracer()
+        self.exporter = exporter
+        self._patches = [
+            patch.object(phoenix, "_TRACER", tracer),
+            patch.object(phoenix, "_SPAN_STATE", {}),
+        ]
+        for p in self._patches:
+            p.start()
+
+    def teardown_method(self):
+        for p in self._patches:
+            p.stop()
+
+    def test_reconstructs_final_text(self):
+        text = self.phoenix.record_opencode_run(OPENCODE_SAMPLE_NDJSON, None)
+        # Verified live: `opencode run` (--format default) against the same
+        # prompt/file printed exactly the second step's text with no
+        # extra wrapping — record_opencode_run must reproduce that, not
+        # dump raw NDJSON or add its own formatting.
+        assert text == "`sample.txt` contains:\n\n```text\nhello world\n```"
+
+    def test_emits_one_step_span_per_message_id_plus_one_tool_span(self):
+        self.phoenix.record_opencode_run(OPENCODE_SAMPLE_NDJSON, None)
+
+        spans = self.exporter.get_finished_spans()
+        names = sorted(s.name for s in spans)
+        assert names == ["opencode.llm.invoke", "opencode.llm.invoke", "opencode.tool.read"]
+
+    def test_tool_span_nests_under_its_own_step_not_the_other_step(self):
+        self.phoenix.record_opencode_run(OPENCODE_SAMPLE_NDJSON, None)
+
+        spans = self.exporter.get_finished_spans()
+        tool_span = next(s for s in spans if s.name == "opencode.tool.read")
+        step_spans = [s for s in spans if s.name == "opencode.llm.invoke"]
+        tool_calling_step = next(s for s in step_spans if "tool-calls" in str(s.attributes.get("opencode.reason")))
+
+        assert tool_span.parent is not None
+        assert tool_span.parent.span_id == tool_calling_step.context.span_id
+        assert tool_span.context.trace_id == tool_calling_step.context.trace_id
+
+    def test_step_spans_carry_token_and_cost_data(self):
+        self.phoenix.record_opencode_run(OPENCODE_SAMPLE_NDJSON, None)
+
+        spans = self.exporter.get_finished_spans()
+        step_spans = [s for s in spans if s.name == "opencode.llm.invoke"]
+        text_step = next(s for s in step_spans if s.attributes.get("opencode.reason") == "stop")
+
+        assert text_step.attributes["gen_ai.usage.input_tokens"] == 17179
+        assert text_step.attributes["gen_ai.usage.output_tokens"] == 41
+        assert text_step.attributes["opencode.cost_usd"] == pytest.approx(0.052152)
+        assert text_step.attributes["gen_ai.system"] == "opencode"
+
+    def test_tool_span_carries_input_and_output(self):
+        self.phoenix.record_opencode_run(OPENCODE_SAMPLE_NDJSON, None)
+
+        spans = self.exporter.get_finished_spans()
+        tool_span = next(s for s in spans if s.name == "opencode.tool.read")
+
+        assert tool_span.attributes["tool.name"] == "read"
+        assert tool_span.attributes["tool.status"] == "completed"
+        assert "sample.txt" in tool_span.attributes["input.value"]
+        assert "hello world" in tool_span.attributes["output.value"]
+
+    def test_spans_nest_under_explicit_parent_context(self):
+        """When given a parent_context (the delegating tool.invoke span's
+        context), all opencode spans must share its trace — proving the
+        bridge actually closes the loop between hermes's tool call and
+        OpenCode's own activity, not just producing orphaned spans."""
+        phoenix = self.phoenix
+
+        phoenix.on_pre_tool_call(tool_name="opencode_delegate", tool_call_id="tc-bridge")
+        parent_context = phoenix.get_span_context_for_tool_call("tc-bridge", "opencode_delegate")
+        assert parent_context is not None
+
+        phoenix.record_opencode_run(OPENCODE_SAMPLE_NDJSON, parent_context)
+        phoenix.on_post_tool_call(tool_name="opencode_delegate", tool_call_id="tc-bridge", status="ok")
+
+        spans = self.exporter.get_finished_spans()
+        trace_ids = {s.context.trace_id for s in spans}
+        assert len(trace_ids) == 1, "opencode spans must share the delegating tool call's trace"
+
+        delegate_span = next(s for s in spans if s.name == "tool.invoke")
+        step_spans = [s for s in spans if s.name == "opencode.llm.invoke"]
+        assert all(s.parent is not None and s.parent.span_id == delegate_span.context.span_id for s in step_spans), (
+            "opencode.llm.invoke steps must be direct children of the delegating tool.invoke span"
+        )
+
+    def test_empty_input_returns_empty_string(self):
+        assert self.phoenix.record_opencode_run("", None) == ""
+        assert self.phoenix.record_opencode_run("   \n  ", None) == ""
+
+    def test_malformed_json_lines_are_skipped_not_fatal(self):
+        garbage = "not json at all\n" + OPENCODE_SAMPLE_NDJSON + "\nalso not json{{{"
+        text = self.phoenix.record_opencode_run(garbage, None)
+        assert text == "`sample.txt` contains:\n\n```text\nhello world\n```"
+
+    def test_totally_unparseable_input_returns_empty_string_not_raw_text(self):
+        text = self.phoenix.record_opencode_run("this is not ndjson\nneither is this", None)
+        assert text == ""
