@@ -325,6 +325,62 @@ def get_current_traceparent() -> Optional[str]:
         return None
 
 
+def _traceparent_for_context(context: Optional[Any]) -> Optional[str]:
+    """Build a W3C traceparent string for an *explicit* OTel Context, not
+    ambient/"current" context.
+
+    Use this whenever a specific span object is on hand to root the
+    traceparent in (e.g. the tool.invoke span just created for this call) —
+    spans in this plugin are created via start_span() and are never attached
+    to ambient context (see _get_turn_context's docstring), so
+    get_current_traceparent()/ambient-context injection does not reliably
+    reflect any particular span.
+    """
+    if not _OTEL_AVAILABLE or TraceContextTextMapPropagator is None or context is None:
+        return None
+    try:
+        carrier: Dict[str, str] = {}
+        TraceContextTextMapPropagator().inject(carrier, context=context)
+        return carrier.get("traceparent")
+    except Exception:
+        return None
+
+
+def get_span_context_for_tool_call(tool_call_id: str, tool_name: str = "") -> Optional[Any]:
+    """Return the OTel Context of a still-open tool.invoke span.
+
+    For in-process callers only (same Python process, running between
+    on_pre_tool_call and on_post_tool_call for this tool_call_id) — e.g. a
+    tool implementation that shells out and wants to replay the subprocess's
+    own structured output as child spans of this tool call, without
+    serialising through a TRACEPARENT string (that's what the dict returned
+    by on_pre_tool_call is for, for actual cross-process propagation).
+
+    Pass the returned Context as the explicit ``context=`` kwarg on
+    start_span()/start_as_current_span(). Returns None when OTel is
+    unavailable or no matching span is currently open — callers must not
+    fall back to ambient/"current" context, which this plugin's spans are
+    never attached to.
+    """
+    if not _OTEL_AVAILABLE:
+        return None
+    key = _tool_key(tool_call_id, tool_name)
+    with _STATE_LOCK:
+        state = _SPAN_STATE.get(key)
+    if state is None:
+        return None
+    span = state.get("span")
+    if span is None:
+        return None
+    try:
+        return _otel_trace.set_span_in_context(span)
+    except Exception as exc:
+        logger.debug(
+            "phoenix plugin: failed to build context for tool call %s: %s", tool_call_id, exc
+        )
+        return None
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # No-op tracer (used when OTel is unavailable)
 # ──────────────────────────────────────────────────────────────────────────
@@ -745,9 +801,15 @@ def on_pre_tool_call(
 
     _debug(f"started tool.invoke span for {key} tool={tool_name}")
 
-    # Build TRACEPARENT for subprocess propagation.
-    # Hermes tool-executor will merge this dict into the subprocess env.
-    traceparent = get_current_traceparent()
+    # Build TRACEPARENT for subprocess propagation, rooted explicitly in the
+    # span just created above — NOT ambient/"current" context, which this
+    # span was never attached to (see _get_turn_context's docstring).
+    # Hermes tool-executor merges the returned dict into the subprocess env.
+    try:
+        span_context = _otel_trace.set_span_in_context(span)
+    except Exception:
+        span_context = None
+    traceparent = _traceparent_for_context(span_context)
     if traceparent:
         return {"TRACEPARENT": traceparent}
     return None

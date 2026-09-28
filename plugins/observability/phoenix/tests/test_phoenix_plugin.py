@@ -146,25 +146,42 @@ class TestPhoenixPlugin:
         assert "api_request_error" in hook_names
 
     def test_on_pre_tool_call_returns_traceparent(self):
-        """on_pre_tool_call should return TRACEPARENT dict when a span is active."""
-        from plugins.observability.phoenix import on_pre_tool_call
+        """on_pre_tool_call should return a TRACEPARENT dict actually rooted
+        in the tool.invoke span it just created — not in ambient/"current"
+        context, which this plugin's spans are never attached to. Uses a
+        real OTel SDK tracer (not a mock span) because the previous version
+        of this test only proved get_current_traceparent()'s return value
+        was plumbed through, which is exactly the ambient-context bug this
+        fix removes — a MagicMock span can't prove the traceparent is
+        rooted in the right span, only a real one with a decodable
+        SpanContext can."""
+        import plugins.observability.phoenix as phoenix
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.trace import format_span_id, format_trace_id
 
-        with patch("plugins.observability.phoenix._get_or_create_tracer") as mock_get_tracer:
-            mock_span = MagicMock()
-            mock_tracer = MagicMock()
-            mock_tracer.start_span.return_value = mock_span
-            mock_get_tracer.return_value = mock_tracer
+        provider = TracerProvider(resource=Resource.create({"service.name": "test"}))
+        tracer = provider.get_tracer("test")
 
-            with patch("plugins.observability.phoenix.get_current_traceparent", return_value="00-1234567890abcdef-1234567890abcdef-01"):
-                result = on_pre_tool_call(
-                    tool_name="terminal",
-                    args={"command": "echo hello"},
-                    tool_call_id="tc-1",
-                )
+        with patch.object(phoenix, "_TRACER", tracer), patch.object(phoenix, "_SPAN_STATE", {}):
+            result = phoenix.on_pre_tool_call(
+                tool_name="terminal",
+                args={"command": "echo hello"},
+                tool_call_id="tc-1",
+            )
 
             assert result is not None
             assert "TRACEPARENT" in result
-            assert result["TRACEPARENT"].startswith("00-")
+            traceparent = result["TRACEPARENT"]
+            assert traceparent.startswith("00-")
+
+            span = phoenix._SPAN_STATE["tc-1"]["span"]
+            span_ctx = span.get_span_context()
+            expected = f"00-{format_trace_id(span_ctx.trace_id)}-{format_span_id(span_ctx.span_id)}-01"
+            assert traceparent == expected, (
+                f"TRACEPARENT must be rooted in the tool.invoke span itself: "
+                f"expected {expected}, got {traceparent}"
+            )
 
     def test_on_post_tool_call_ends_span(self):
         """on_post_tool_call should end the tool.invoke span."""
@@ -508,3 +525,82 @@ class TestPhoenixTurnParenting:
         assert "on_session_end" in hook_names
         assert "on_session_finalize" in hook_names
         assert "on_session_reset" in hook_names
+
+
+class TestPhoenixToolCallSpanContext:
+    """get_span_context_for_tool_call() must hand back the real tool.invoke
+    span's context, so in-process callers (e.g. a tool implementation
+    replaying a subprocess's own structured output as spans) can parent
+    child spans under the exact tool call, not the turn or nothing at all."""
+
+    def _fresh_tracer(self):
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider(resource=Resource.create({"service.name": "test"}))
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        return provider.get_tracer("test"), exporter
+
+    def setup_method(self):
+        import plugins.observability.phoenix as phoenix
+
+        self.phoenix = phoenix
+        tracer, exporter = self._fresh_tracer()
+        self.exporter = exporter
+        self._patches = [
+            patch.object(phoenix, "_TRACER", tracer),
+            patch.object(phoenix, "_SPAN_STATE", {}),
+            patch.object(phoenix, "_TURN_SPANS", {}),
+            patch.object(phoenix, "_SESSION_CURRENT_TURN", {}),
+        ]
+        for p in self._patches:
+            p.start()
+
+    def teardown_method(self):
+        for p in self._patches:
+            p.stop()
+
+    def test_child_span_parents_under_the_tool_call_not_the_turn(self):
+        phoenix = self.phoenix
+
+        phoenix.on_pre_tool_call(
+            tool_name="opencode", tool_call_id="tc-1", session_id="sess-1", turn_id="turn-1",
+        )
+
+        context = phoenix.get_span_context_for_tool_call("tc-1", "opencode")
+        assert context is not None
+
+        child = phoenix._TRACER.start_span("opencode.step", context=context)
+        child.end()
+
+        phoenix.on_post_tool_call(tool_name="opencode", tool_call_id="tc-1", status="ok")
+        phoenix._flush_session_turn(session_id="sess-1")
+
+        spans = self.exporter.get_finished_spans()
+        names = sorted(s.name for s in spans)
+        assert names == ["opencode.step", "tool.invoke", "turn"]
+
+        trace_ids = {s.context.trace_id for s in spans}
+        assert len(trace_ids) == 1, "child span must share the tool call's trace"
+
+        tool_span = next(s for s in spans if s.name == "tool.invoke")
+        child_span = next(s for s in spans if s.name == "opencode.step")
+        assert child_span.parent is not None
+        assert child_span.parent.span_id == tool_span.context.span_id, (
+            "child span must be parented under the tool.invoke span, not the turn span"
+        )
+
+    def test_returns_none_for_unknown_tool_call(self):
+        phoenix = self.phoenix
+        assert phoenix.get_span_context_for_tool_call("no-such-id", "opencode") is None
+
+    def test_returns_none_after_tool_call_already_ended(self):
+        phoenix = self.phoenix
+
+        phoenix.on_pre_tool_call(tool_name="opencode", tool_call_id="tc-2")
+        phoenix.on_post_tool_call(tool_name="opencode", tool_call_id="tc-2", status="ok")
+
+        assert phoenix.get_span_context_for_tool_call("tc-2", "opencode") is None
