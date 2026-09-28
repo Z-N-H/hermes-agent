@@ -12,6 +12,8 @@ Pull ONE Zight capture into the Obsidian vault at `/mnt/z/pantheon/vault/ZNH/`, 
 
 **REQUIRED:** Load `using-zight-mcp` before making any Zight MCP calls — it documents the confirmed `zight_get_transcript` schema, the `id`-not-`item_id` gotcha, and why the webhook payload's own `transcription` field must never be trusted directly.
 
+**REQUIRED:** Load `vault-tagging` before writing any `tags:` — it defines `client/<slug>` / `src/zight` and the `vault_tags.py check` you run before finishing.
+
 ## Trigger and scope
 
 The `zight-transcripts` webhook route only forwards `added_to_collection` events — Zight has one org-wide webhook URL firing every event type, and a route script (`zight_added_to_collection_filter.py`) already drops everything else before this skill ever runs. The payload you receive is the flattened `added_to_collection` payload (`item_url`, `name`, `item_type`, `collection_name`, `description`, `email`, `created_at`, plus a `type` field) — **ignore its `transcription` field entirely**; it can be an unresolved Ruby object's string form (`#<Transcription:0x...>`) rather than real text. Always fetch fresh via `zight_get_transcript`.
@@ -40,7 +42,7 @@ Before writing anything, check whether a note for this item already exists: sear
 
 **Fallback: content-based**, same approach as `granola-meeting-filing`. Use this only when `collection_name` is generic/non-client (e.g. `Test`, `Inbox`, `Uncategorized`, or any other collection that isn't a client name) or doesn't match any known client. Match `name`, `description`, and the fetched transcript content against the same `Clients/*.md` corpus.
 
-- Confident match, from either signal → set `client:` and `related: [[Clients/<Client>]]`, tag the client slug.
+- Confident match, from either signal → set `client:` and `related: [[Clients/<Client>]]`, tag `client/<slug>` (see `vault-tagging`).
 - Low confidence or no signal from both → leave `client: ""`, tag `needs-triage`. **A wrong client silently attached is worse than an honest miss.**
 
 ## Writing the note
@@ -61,7 +63,7 @@ client: <resolved or "">
 transcript-pending: <true only if the retry in "Fetching" above still came back empty>
 action-items-count: <n>
 llm-context: "<short synthesized summary>"
-tags: [capture, zight, <client-slug or needs-triage>]
+tags: [capture, src/zight, <client/<slug> or needs-triage>]   # convention: vault-tagging skill
 related:
   - "[[Clients/<Client>]]"              # omit if unresolved
 ```
@@ -74,14 +76,18 @@ Body: `## Transcript` is the fetched transcript text verbatim (or, if `transcrip
 
 Same sanctioned writer as every other vault automation — never hand-write card markdown:
 ```
-/mnt/z/pantheon/vault/ZNH/scripts/vault_board.py upsert --title "..." --status open --priority <low|medium|high|critical> --assignees <owner> --client <client> --tags <slug>
+/mnt/z/pantheon/vault/ZNH/scripts/vault_board.py upsert --title "..." --status open --priority <low|medium|high|critical> --assignees <owner> --client <client> --source zight --tags <topic-tags>
 ```
 Unresolved-client captures: any action items stay listed in the note body only, no card created.
 
 ## Notification
 
-One Slack Block Kit message per run: capture filed (or skipped as a duplicate), client resolution, action items → cards created, `needs-triage` flag if applicable. Same shape as the inbox-scanner digest.
+The `zight-transcripts` route delivers **your final reply** to Slack; crashes and timeouts are delivered by Hermes itself. So:
+
+- **Filed a capture** → final reply is a short summary: capture title, client resolution, cards created, `needs-triage` flag if applicable.
+- **Duplicate (idempotency skip)** → reply with exactly `[SILENT]` and nothing else.
+- **Couldn't do the job** (Zight unreachable, OAuth expired) → say so plainly. Never `[SILENT]` on a failure.
 
 ## Verification
 
-After filing, confirm the note exists under `Transcripts/` with its `zight_id` set, and any created Kanban cards exist under `TaskNotes/Tasks/`.
+After filing, confirm the note exists under `Transcripts/` with its `zight_id` set, and any created Kanban cards exist under `TaskNotes/Tasks/`. Run `uv run --no-project /mnt/z/pantheon/vault/ZNH/scripts/vault_tags.py check` and fix anything it reports for the files you wrote.

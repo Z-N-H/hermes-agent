@@ -8,11 +8,27 @@ required_mcp_servers: [pantheon]
 
 # Granola Meeting Filing
 
-Pull NEW Granola meetings into the Obsidian vault at `/mnt/z/pantheon/vault/ZNH/`, matched to a client, with action items turned into Kanban cards. Runs inside a Hermes cron session spawned by the `granola-meeting-scanner` job.
+Pull Granola meetings into the Obsidian vault at `/mnt/z/pantheon/vault/ZNH/`, matched to a client, with action items turned into Kanban cards. Two trigger modes:
 
-## Trigger
+- **Webhook mode** (primary, added 2026-09-28): the `granola-meetings` Hermes webhook route fires this skill once per `note.generated`/`note.edited` event with a single note ID. See "Webhook mode" below.
+- **Batch mode** (catch-up sweep): the daily `granola-daily-catch-up` cron job runs a full sync diffing against `seen_granola_ids`. Safety net for missed webhooks (Granola disables endpoints after 4 days of failures; ntfy only keeps ~12h of history). See "Fetching meetings".
 
-The `granola-meeting-scanner` cron job invokes `hermes chat -q` with this skill loaded and passes the current `seen_granola_ids` in the prompt. The agent turn's job: fetch whatever is new, file it, append to state. See `docs/plans/2026-08-19-granola-meeting-scanner-design.md` for the architecture.
+**REQUIRED:** Load `vault-tagging` before writing any `tags:` — it defines `client/<slug>` / `src/granola` and the `vault_tags.py check` you run before finishing.
+
+## Webhook mode — file ONE meeting by ID
+
+Triggered by the `granola-meetings` route with a prompt carrying `note_id` (the only trusted input — the relayed payload carries no note content, and Granola's signing secret cannot be verified over the ntfy hop, so the payload is a nudge, never a source). Steps:
+
+1. **MCP precondition** — same as below: `mcp__pantheon__search(query="granola")` must return `granola_*` tools, else fire the ntfy alert to `znh-pantheon` and stop.
+2. **Dedup against `seen_granola_ids`.** Read `.hermes/scripts/granola_scanner_state.json`. If the ID is already listed, STOP: no note, no card, and reply with exactly `[SILENT]` (Granola retries and `note.edited` re-fires would otherwise spam Slack).
+3. **Fetch the meeting fresh by ID** via the hub (`granola_get_meetings` — search/get_schema/execute per the Iron Law below). The webhook `note_id` and the MCP's canonical meeting ID MAY differ: if a direct fetch returns nothing, fall back to `granola_list_meetings` (recent window) and look for the ID anywhere in the returned meeting objects. If neither finds it, the ID is forged/unknown — **exit cleanly: no note, no card, no state change, and reply with exactly `[SILENT]`.** This is expected behavior for bogus payloads, not a failure.
+4. **Re-check dedup on the canonical ID.** Once the meeting is resolved, check ITS canonical ID against `seen_granola_ids` too (an already-filed meeting can arrive under a differently-shaped webhook ID). Match → stop as in step 2.
+5. **File it** — client matching, note write, Kanban action items exactly as in the sections below — and append the **canonical** ID to `seen_granola_ids` in the same logical step as writing the note.
+6. **Notify** — see "Notification": your final reply is the Slack message. `[SILENT]` on dedup-skips and unknown IDs.
+
+## Batch mode — trigger
+
+The `granola-daily-catch-up` cron job invokes `hermes chat -q` with this skill loaded and passes the current `seen_granola_ids` in the prompt. The agent turn's job: fetch whatever is new, file it, append to state. See `docs/plans/2026-08-19-granola-meeting-scanner-design.md` for the architecture.
 
 ## MCP availability precondition — check this FIRST, before anything else
 
@@ -61,7 +77,7 @@ Filter to IDs not in the passed-in `seen_granola_ids`. For each new one, `get_me
 
 Content-based, no schema changes to client notes. Read the client corpus at `/mnt/z/pantheon/vault/ZNH/Clients/*.md` (filenames + aliases/brand/company/attendee names appearing in note bodies). Match against brands/companies and attendee names **mentioned in the meeting itself** (title, attendee list, Granola summary text).
 
-- Confident match → set `client:` and `related: [[Clients/<Client>]]`, tag the client slug.
+- Confident match → set `client:` and `related: [[Clients/<Client>]]`, tag `client/<slug>` (see `vault-tagging`).
 - Low confidence or conflicting signals → leave `client: ""`, tag `needs-triage`, name it in the summary. **A wrong client silently attached is worse than an honest miss — never guess.**
 
 ## Writing the note
@@ -84,7 +100,7 @@ decisions-made: <bool, best-effort>
 action-items-count: <n>
 llm-priority: <best-effort>
 llm-context: "<short synthesized summary>"
-tags: [meeting, granola, <client-slug or needs-triage>]
+tags: [meeting, src/granola, <client/<slug> or needs-triage>]   # convention: vault-tagging skill
 related:
   - "[[Clients/<Client>]]"          # omit if unresolved
 ```
@@ -101,14 +117,18 @@ Then, as separate sections built by *this skill* (not Granola) for task tracking
 
 Only when a client was confidently resolved — an action item with no client/project context is not a useful task. Each `- [ ] **Owner:** <name>` assigned to the user becomes a Kanban card.
 
-- Prefer the single sanctioned writer: `/mnt/z/pantheon/vault/ZNH/scripts/vault_board.py upsert --title "..." --status open --priority <low|medium|high|critical> --assignees <owner> --client <client> --tags <slug>`.
+- Prefer the single sanctioned writer: `/mnt/z/pantheon/vault/ZNH/scripts/vault_board.py upsert --title "..." --status open --priority <low|medium|high|critical> --assignees <owner> --client <client> --source granola --tags meeting-action`. Don't put `client/` or `src/` in `--tags` — the writer derives them from `--client` / `--source` (without `--source granola` the card is mislabelled `src/manual`).
 - **Current board = TaskNotes** (`TaskNotes/Tasks/`, `pm-task: true` card files, live Bases view). There is NO project-level `taskIds` array anymore — scan card files on disk, never read-modify-write a stale index. See `reference/tasknotes-plugin-schema.md` in the obsidian skill.
 - Unresolved-client notes: action items stay listed in the note body only, no card created.
 
 ## Notification
 
-Send **one Slack Block Kit summary** per run: meetings filed, action items → cards created, and anything flagged `needs-triage` (name the meeting). Use `send_message` with the same shape as the inbox-scanner digest.
+Both the webhook route and the cron job deliver **your final reply** to Slack; failures (crashes, timeouts) are delivered by Hermes itself. So:
+
+- **Filed something** → final reply is a short summary: meetings filed (title + client), cards created, anything flagged `needs-triage` (name the meeting).
+- **Nothing to do** (dedup-skip, unknown ID, batch run with no new meetings) → reply with exactly `[SILENT]` and nothing else.
+- **Couldn't do the job** (Granola unreachable, OAuth expired) → fire the ntfy alert as above **and** say so plainly in the reply. Never `[SILENT]` on a failure.
 
 ## Verification
 
-After filing, confirm each note exists under `Meetings/` and its `granola_id` is present in the state file's `seen_granola_ids`. Confirm created Kanban cards exist under `TaskNotes/Tasks/`.
+After filing, confirm each note exists under `Meetings/` and its `granola_id` is present in the state file's `seen_granola_ids`. Confirm created Kanban cards exist under `TaskNotes/Tasks/`. Run `uv run --no-project /mnt/z/pantheon/vault/ZNH/scripts/vault_tags.py check` and fix anything it reports for the files you wrote.
