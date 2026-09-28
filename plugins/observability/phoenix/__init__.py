@@ -74,7 +74,7 @@ except Exception as _exc:
 
 
 try:
-    from arize.phoenix.otel import register as _phoenix_register
+    from phoenix.otel import register as _phoenix_register
 except Exception as _exc:
     logger.debug("phoenix plugin: arize-phoenix-otel not available (%s)", _exc)
     _phoenix_register = None  # type: ignore[assignment]
@@ -193,6 +193,100 @@ def _req_key(api_request_id: str) -> str:
 
 def _tool_key(tool_call_id: str, tool_name: str) -> str:
     return tool_call_id or f"tool-{tool_name}-{threading.get_ident()}-{time.time():.6f}"
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Turn-level root spans — so llm.invoke/tool.invoke share one trace per turn
+# ──────────────────────────────────────────────────────────────────────────
+#
+# Every span below was created with ``tracer.start_span()`` and never made
+# "current" (no ``start_as_current_span`` / ``context.attach``), so OTel had
+# no parent to attach the next span to: every llm.invoke and tool.invoke —
+# even ones from the same conversation turn — became its own single-span
+# trace. Phoenix showed a flat soup of disconnected traces instead of one
+# coherent "LLM call -> tool call -> LLM call" trace per turn.
+#
+# Fix: keep one open "turn" root span per hermes.turn_id and pass its
+# context explicitly as ``context=`` to each child span's start_span() call.
+# Passing context explicitly (rather than relying on ambient/"current"
+# context) is required here because the tool call for a turn typically
+# starts *after* the preceding llm.invoke span has already ended — there's
+# no overlapping "current span" for OTel to nest under implicitly.
+#
+# A session can only have one turn open at a time, so a turn boundary is
+# detected the cheap way: when a session's turn_id changes, the previous
+# turn's root span is closed. The on_session_* hooks are a safety net that
+# closes whatever turn is still open when a session ends/resets, so a root
+# span is never left dangling (and unflushed) past its session.
+
+_TURN_LOCK = threading.Lock()
+_TURN_SPANS: Dict[str, Dict[str, Any]] = {}  # turn_id -> {"span": ...}
+_SESSION_CURRENT_TURN: Dict[str, str] = {}  # session_id -> turn_id
+
+
+def _end_turn_span(turn_id: Optional[str]) -> None:
+    if not turn_id:
+        return
+    state = _TURN_SPANS.pop(turn_id, None)
+    if state is None:
+        return
+    try:
+        state["span"].set_status(_Status(_StatusCode.OK))
+        state["span"].end()
+        _debug(f"ended turn span for {turn_id}")
+    except Exception as exc:
+        logger.debug("phoenix plugin: failed to end turn span: %s", exc)
+
+
+def _get_turn_context(session_id: str, turn_id: str) -> Optional[Any]:
+    """Return the OTel Context of the current turn's root span, creating or
+    rotating that root span as needed. Returns None when there's no
+    OTel/turn_id to group under, in which case the caller's span becomes its
+    own trace (unchanged fallback behaviour)."""
+    if not turn_id or not _OTEL_AVAILABLE:
+        return None
+
+    tracer = _get_or_create_tracer()
+    session_key = session_id or turn_id
+
+    with _TURN_LOCK:
+        previous_turn_id = _SESSION_CURRENT_TURN.get(session_key)
+        if previous_turn_id != turn_id:
+            _end_turn_span(previous_turn_id)
+            _SESSION_CURRENT_TURN[session_key] = turn_id
+
+        state = _TURN_SPANS.get(turn_id)
+        if state is None:
+            try:
+                root_span = tracer.start_span(
+                    "turn",
+                    kind=_SpanKind.INTERNAL,
+                    attributes={
+                        "hermes.turn_id": turn_id,
+                        "hermes.session_id": session_id or "",
+                    },
+                )
+                _set_session_and_kind(root_span, session_id, "chain")
+                context = _otel_trace.set_span_in_context(root_span)
+            except Exception as exc:
+                logger.debug("phoenix plugin: failed to start turn span: %s", exc)
+                return None
+            state = {"span": root_span, "context": context}
+            _TURN_SPANS[turn_id] = state
+            _debug(f"started turn span for {turn_id}")
+
+        return state["context"]
+
+
+def _flush_session_turn(session_id: str = "", **_: Any) -> None:
+    """End whatever turn is still open for a session (on_session_end/
+    finalize/reset). Safety net so a turn's root span is never left
+    dangling — and unflushed to Phoenix — past its session's lifetime."""
+    if not session_id:
+        return
+    with _TURN_LOCK:
+        turn_id = _SESSION_CURRENT_TURN.pop(session_id, None)
+    _end_turn_span(turn_id)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -356,7 +450,12 @@ def on_pre_api_request(
         pass
 
     try:
-        span = tracer.start_span("llm.invoke", kind=_SpanKind.CLIENT, attributes=attrs)
+        span = tracer.start_span(
+            "llm.invoke",
+            context=_get_turn_context(session_id, turn_id),
+            kind=_SpanKind.CLIENT,
+            attributes=attrs,
+        )
     except Exception as exc:
         logger.debug("phoenix plugin: failed to start llm.invoke span: %s", exc)
         return
@@ -625,7 +724,12 @@ def on_pre_tool_call(
         pass
 
     try:
-        span = tracer.start_span("tool.invoke", kind=_SpanKind.INTERNAL, attributes=attrs)
+        span = tracer.start_span(
+            "tool.invoke",
+            context=_get_turn_context(session_id, turn_id),
+            kind=_SpanKind.INTERNAL,
+            attributes=attrs,
+        )
     except Exception as exc:
         logger.debug("phoenix plugin: failed to start tool.invoke span: %s", exc)
         return None
@@ -756,6 +860,9 @@ def register(ctx) -> None:
     ctx.register_hook("api_request_error", on_api_request_error)
     ctx.register_hook("pre_tool_call", on_pre_tool_call)
     ctx.register_hook("post_tool_call", on_post_tool_call)
+    ctx.register_hook("on_session_end", _flush_session_turn)
+    ctx.register_hook("on_session_finalize", _flush_session_turn)
+    ctx.register_hook("on_session_reset", _flush_session_turn)
     _install_subprocess_patch()
 
 

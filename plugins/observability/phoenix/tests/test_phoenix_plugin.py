@@ -368,3 +368,143 @@ class TestPhoenixPlugin:
             kind_calls = [c for c in mock_span.set_attribute.call_args_list if c[0][0] == "openinference.span.kind"]
             assert len(kind_calls) == 1, "openinference.span.kind should be set on tool span"
             assert kind_calls[0][0][1] == "tool"
+
+
+class TestPhoenixTurnParenting:
+    """Integration tests: spans from the same turn must share one trace.
+
+    Uses a real OTel SDK tracer bound to an in-memory exporter (not mocks)
+    so trace_id/parent span_id come from actual OTel context propagation,
+    not from asserting call_args shapes.
+    """
+
+    def _fresh_tracer(self):
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider(resource=Resource.create({"service.name": "test"}))
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        return provider.get_tracer("test"), exporter
+
+    def setup_method(self):
+        import plugins.observability.phoenix as phoenix
+
+        self.phoenix = phoenix
+        tracer, exporter = self._fresh_tracer()
+        self.exporter = exporter
+        self._patches = [
+            patch.object(phoenix, "_TRACER", tracer),
+            patch.object(phoenix, "_SPAN_STATE", {}),
+            patch.object(phoenix, "_TURN_SPANS", {}),
+            patch.object(phoenix, "_SESSION_CURRENT_TURN", {}),
+        ]
+        for p in self._patches:
+            p.start()
+
+    def teardown_method(self):
+        for p in self._patches:
+            p.stop()
+
+    def test_llm_and_tool_spans_in_same_turn_share_one_trace(self):
+        """llm.invoke -> tool.invoke -> llm.invoke within one turn_id must
+        all land in a single trace, parented under that turn's root span —
+        not three disconnected single-span traces."""
+        phoenix = self.phoenix
+
+        phoenix.on_pre_api_request(
+            api_request_id="req-1", session_id="sess-1", turn_id="turn-1",
+            model="m", provider="p",
+        )
+        phoenix.on_post_api_request(api_request_id="req-1", usage={"input_tokens": 1})
+
+        phoenix.on_pre_tool_call(
+            tool_name="terminal", tool_call_id="tc-1", session_id="sess-1", turn_id="turn-1",
+        )
+        phoenix.on_post_tool_call(tool_name="terminal", tool_call_id="tc-1", status="ok")
+
+        phoenix.on_pre_api_request(
+            api_request_id="req-2", session_id="sess-1", turn_id="turn-1",
+            model="m", provider="p",
+        )
+        phoenix.on_post_api_request(api_request_id="req-2", usage={"input_tokens": 1})
+
+        # End the turn explicitly (as on_session_end would) so its root span
+        # is exported alongside the children.
+        phoenix._flush_session_turn(session_id="sess-1")
+
+        spans = self.exporter.get_finished_spans()
+        names = sorted(s.name for s in spans)
+        assert names == ["llm.invoke", "llm.invoke", "tool.invoke", "turn"]
+
+        trace_ids = {s.context.trace_id for s in spans}
+        assert len(trace_ids) == 1, f"expected one shared trace, got {len(trace_ids)}: {spans}"
+
+        turn_span = next(s for s in spans if s.name == "turn")
+        for s in spans:
+            if s.name == "turn":
+                continue
+            assert s.parent is not None
+            assert s.parent.span_id == turn_span.context.span_id, (
+                f"{s.name} should be parented under the turn span"
+            )
+
+    def test_new_turn_id_closes_previous_turn_span(self):
+        """A turn_id change for the same session must close the previous
+        turn's root span and start a new trace for the next one."""
+        phoenix = self.phoenix
+
+        phoenix.on_pre_api_request(
+            api_request_id="req-1", session_id="sess-1", turn_id="turn-1", model="m", provider="p",
+        )
+        phoenix.on_post_api_request(api_request_id="req-1", usage={"input_tokens": 1})
+
+        phoenix.on_pre_api_request(
+            api_request_id="req-2", session_id="sess-1", turn_id="turn-2", model="m", provider="p",
+        )
+        phoenix.on_post_api_request(api_request_id="req-2", usage={"input_tokens": 1})
+
+        phoenix._flush_session_turn(session_id="sess-1")
+
+        spans = self.exporter.get_finished_spans()
+        turn_spans = [s for s in spans if s.name == "turn"]
+        assert len(turn_spans) == 2, "each turn_id should get its own root span"
+
+        trace_ids = {s.context.trace_id for s in turn_spans}
+        assert len(trace_ids) == 2, "different turns must not share a trace"
+
+    def test_session_end_flushes_open_turn(self):
+        """on_session_end (wired via _flush_session_turn) must end whatever
+        turn is still open, so its root span isn't left dangling/unflushed."""
+        phoenix = self.phoenix
+
+        phoenix.on_pre_api_request(
+            api_request_id="req-1", session_id="sess-1", turn_id="turn-1", model="m", provider="p",
+        )
+        phoenix.on_post_api_request(api_request_id="req-1", usage={"input_tokens": 1})
+
+        assert "sess-1" in phoenix._SESSION_CURRENT_TURN
+        assert self.exporter.get_finished_spans() == () or all(
+            s.name != "turn" for s in self.exporter.get_finished_spans()
+        )
+
+        phoenix._flush_session_turn(session_id="sess-1")
+
+        assert "sess-1" not in phoenix._SESSION_CURRENT_TURN
+        assert "turn-1" not in phoenix._TURN_SPANS
+        assert any(s.name == "turn" for s in self.exporter.get_finished_spans())
+
+    def test_register_wires_session_end_hooks(self):
+        """register() must subscribe the turn-flush handler to every session
+        lifecycle hook, or a turn's root span outlives its session."""
+        from plugins.observability.phoenix import register
+
+        ctx = MagicMock()
+        register(ctx)
+
+        hook_names = [call.args[0] for call in ctx.register_hook.call_args_list]
+        assert "on_session_end" in hook_names
+        assert "on_session_finalize" in hook_names
+        assert "on_session_reset" in hook_names
