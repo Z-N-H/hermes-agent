@@ -389,6 +389,17 @@ def _handle_opencode_delegate(args: dict, **_: Any) -> str:
         env.setdefault(
             "OPENCODE_CONFIG_HOME", str(Path.home() / ".config" / "opencode")
         )
+        # `cwd=wd` below changes the child's real (syscall-level) working
+        # directory, but env is a verbatim copy of THIS process's
+        # environment -- including its own PWD, which now silently
+        # disagrees with wd. PWD is a shell/environment convention, not
+        # kernel-enforced, and OpenCode was found (live, 2026-09) to trust
+        # it over the actual cwd for at least part of its own project-root
+        # resolution: a workdir pointing at a directory with the target
+        # file was silently ignored in favour of wherever the *caller's*
+        # PWD happened to point, with no error -- just a wrong-directory
+        # delegation that looks like a normal (if puzzling) result.
+        env["PWD"] = str(wd)
         try:
             result = subprocess.run(
                 cmd, cwd=wd, env=env, capture_output=True, text=True, timeout=timeout
