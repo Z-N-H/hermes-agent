@@ -222,3 +222,10 @@ GEMINI.md
 .claude/
 .opencode/
 tailscale/
+
+# Pantheon (auto-managed — do not remove)
+.opencode-events.jsonl
+.opencode-run.log
+.opencode-stderr.log
+PROJECT_KNOWLEDGE
+READ_ONLY_REFERENCE_CODE
