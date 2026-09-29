@@ -313,6 +313,37 @@ def _run_in_pane(
         shutil.rmtree(spool, ignore_errors=True)
 
 
+def _trace_and_reconstruct(raw_stdout: str) -> str:
+    """Best-effort: parse OpenCode's ``--format json`` NDJSON stdout, emit
+    Phoenix spans for it nested under this delegate call's own tool.invoke
+    span, and return the reconstructed human-readable text the agent
+    should see in place of raw NDJSON (which ``--format default`` would
+    never have produced).
+
+    Never raises and never blocks on anything external — this is pure
+    in-process parsing of already-captured output, no new I/O. On any
+    failure (phoenix plugin unavailable, OTel not installed, malformed
+    output, whatever) this returns *raw_stdout* unchanged, so a tracing
+    problem can never break OpenCode delegation or show the agent nothing.
+    """
+    try:
+        from plugins.observability.phoenix import (
+            get_span_context_for_tool_call,
+            record_opencode_run,
+        )
+        from tools.approval import get_current_tool_call_id
+    except Exception:
+        return raw_stdout
+
+    try:
+        tool_call_id = get_current_tool_call_id()
+        parent_context = get_span_context_for_tool_call(tool_call_id, "opencode_delegate")
+        reconstructed = record_opencode_run(raw_stdout, parent_context)
+        return reconstructed or raw_stdout
+    except Exception:
+        return raw_stdout
+
+
 def _handle_opencode_delegate(args: dict, **_: Any) -> str:
     task = str(args.get("task") or "").strip()
     if not task:
@@ -327,7 +358,7 @@ def _handle_opencode_delegate(args: dict, **_: Any) -> str:
     if not wd.is_dir():
         return tool_error(f"workdir does not exist: {wd}")
 
-    cmd = ["opencode", "run"]
+    cmd = ["opencode", "run", "--format", "json"]
     model = str(args.get("model") or "").strip()
     if model:
         cmd.extend(["--model", model])
@@ -358,6 +389,17 @@ def _handle_opencode_delegate(args: dict, **_: Any) -> str:
         env.setdefault(
             "OPENCODE_CONFIG_HOME", str(Path.home() / ".config" / "opencode")
         )
+        # `cwd=wd` below changes the child's real (syscall-level) working
+        # directory, but env is a verbatim copy of THIS process's
+        # environment -- including its own PWD, which now silently
+        # disagrees with wd. PWD is a shell/environment convention, not
+        # kernel-enforced, and OpenCode was found (live, 2026-09) to trust
+        # it over the actual cwd for at least part of its own project-root
+        # resolution: a workdir pointing at a directory with the target
+        # file was silently ignored in favour of wherever the *caller's*
+        # PWD happened to point, with no error -- just a wrong-directory
+        # delegation that looks like a normal (if puzzling) result.
+        env["PWD"] = str(wd)
         try:
             result = subprocess.run(
                 cmd, cwd=wd, env=env, capture_output=True, text=True, timeout=timeout
@@ -369,6 +411,8 @@ def _handle_opencode_delegate(args: dict, **_: Any) -> str:
         except Exception as e:  # noqa: BLE001 — surface anything to the agent
             return tool_error(f"{type(e).__name__}: {e}", workdir=str(wd))
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
+
+    stdout = _trace_and_reconstruct(stdout)
 
     if rc != 0:
         return tool_error(

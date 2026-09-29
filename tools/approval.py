@@ -224,6 +224,20 @@ def reset_current_observability_context(
     _approval_turn_id.reset(turn_token)
 
 
+def get_current_tool_call_id() -> str:
+    """Return the tool_call_id bound by set_current_observability_context()
+    for the tool call currently executing on this thread/task, or "" if
+    none is bound.
+
+    Tool handlers don't otherwise receive tool_call_id (registry.dispatch()
+    passes only task_id/session_id/user_task to handler(args, **kwargs)) —
+    this contextvar, set in model_tools.py around the dispatch call, is the
+    only way a handler can correlate itself back to its own pre_tool_call
+    span (e.g. via the phoenix plugin's get_span_context_for_tool_call).
+    """
+    return _approval_tool_call_id.get()
+
+
 def get_current_session_key(default: str = "default") -> str:
     """Return the active session key, preferring context-local state.
 
