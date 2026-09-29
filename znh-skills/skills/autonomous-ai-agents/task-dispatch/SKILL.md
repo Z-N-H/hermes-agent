@@ -102,6 +102,36 @@ That is the whole job — `vault_board.py` creates the card file under
 no board note and no separate index to update, so there is nothing to
 hand-edit afterwards.
 
+## Session continuity
+
+OpenCode sessions persist server-side (in the long-lived `opencode serve`
+daemon) and can be continued hours later with `opencode run --session <id>`
+(`-s <id>`). A continued session keeps everything the run already paid for —
+its reading, its edits, its plan — so a follow-up turn costs only the new
+turn instead of a full context re-bootstrap. (A campaign run as ~46 one-shot
+sessions instead of one continued session spent ~80% of its tokens on
+nothing but re-bootstrapping context.)
+
+The rule:
+
+- **Multi-part logical work = one continued session.** If a task needs
+  repeated dispatches of the same logical piece of work (phased
+  implementation, iterate-on-review cycles, successive delegations for the
+  same task), take the session id from the run — the workdir's
+  `.opencode-sessions.json` sidecar (kanban lane, keyed by card uid) or the
+  `--- session_id: <id> ---` line / `--session-file` of
+  `opencode_delegate.py` — and pass it to every later dispatch of that work.
+- **Retries always continue.** A retry after a failed or dropped run resumes
+  the recorded session id, never starts fresh. The kanban lane does this
+  automatically from the sidecar.
+- **One-shots only for genuinely independent tasks.** A new, unrelated task
+  gets a new session — never chain an unrelated card onto an existing
+  session just for convenience.
+
+Session state never goes in card frontmatter: it lives in the
+`.opencode-sessions.json` sidecar (kanban lane) or the
+`opencode_delegate.py --session-file` argument (direct delegation).
+
 ## Troubleshooting: Ready for Agent not dispatching
 
 If cards moved to the **Ready for Agent** column are not being picked up

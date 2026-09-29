@@ -70,8 +70,82 @@ def _reject_unregistered_project_dir(wd: Path) -> Optional[str]:
     )
 
 
+def extract_session_id(stream: str) -> Optional[str]:
+    """First sessionID in an `opencode run --format json` event stream.
+
+    Events are one JSON object per line and each carries a top-level
+    `sessionID`. Anything unparseable is skipped, so the answer is simply
+    None — the caller then proceeds exactly as a plain one-shot would.
+    """
+    for line in stream.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict):
+            sid = event.get("sessionID")
+            if isinstance(sid, str) and sid:
+                return sid
+    return None
+
+
+def extract_text_output(stream: str) -> str:
+    """Assistant text reassembled from a `--format json` event stream.
+
+    Each text event carries the full chunk in `part.text`, so joining those
+    in stream order reconstructs the reply. Empty if the stream has no text
+    events — the caller falls back to the raw stream.
+    """
+    parts = []
+    for line in stream.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        part = event.get("part")
+        if (isinstance(part, dict) and part.get("type") == "text"
+                and isinstance(part.get("text"), str) and part["text"].strip()):
+            parts.append(part["text"].strip())
+    return "\n\n".join(parts)
+
+
+def _render_continuation_output(result, session_file: Optional[str]) -> str:
+    """Render a `--format json` run like a plain run, plus the session id.
+
+    The resolved session id is written back to `session_file` (best-effort —
+    bookkeeping must never fail a delegation) and appended to the output as a
+    `--- session_id: <id> ---` line so the caller can continue it later with
+    `session=<id>`. If the stream yields no id the run is still reported
+    normally, just without the marker.
+    """
+    stream = result.stdout or ""
+    output = extract_text_output(stream) or stream
+    if result.stderr:
+        output += f"\n--- stderr ---\n{result.stderr}"
+    if result.returncode != 0:
+        output += f"\n--- exit code: {result.returncode} ---"
+    resolved = extract_session_id(stream)
+    if resolved:
+        if session_file:
+            try:
+                Path(session_file).write_text(resolved + "\n", encoding="utf-8")
+            except OSError:
+                pass
+        output += f"\n--- session_id: {resolved} ---"
+    return output.strip()
+
+
 def opencode_delegate(
-    task: str, workdir: str = ".", model: Optional[str] = None, timeout: int = 600
+    task: str, workdir: str = ".", model: Optional[str] = None, timeout: int = 600,
+    session: Optional[str] = None, session_file: Optional[str] = None
 ) -> str:
     """
     Delegate a coding task to OpenCode CLI.
@@ -81,9 +155,16 @@ def opencode_delegate(
         workdir: Working directory (absolute or relative to project root)
         model: Optional model override (e.g., "anthropic/claude-sonnet-4")
         timeout: Max seconds to wait (default 600)
+        session: Optional OpenCode session id to continue (`-s <id>`) — pass
+            the id from a previous delegation's `session_id` marker to resume
+            that session instead of starting a fresh one
+        session_file: Optional path whose stored session id is read (when
+            `session` is not given) and updated after the run — a durable
+            handle for multi-part work spread across separate delegations
 
     Returns:
-        OpenCode's output as string
+        OpenCode's output as string. With `session`/`session_file` the id of
+        the session that ran is appended as `--- session_id: <id> ---`.
     """
     # Resolve workdir
     wd = Path(workdir).resolve()
@@ -94,10 +175,25 @@ def opencode_delegate(
     if guard_error:
         return guard_error
 
+    # Session continuity: with `session`/`session_file` the run must emit
+    # `--format json` so its session id can be extracted afterwards; without
+    # them the invocation (and output shape) is exactly what it has always
+    # been.
+    if session_file and not session:
+        try:
+            stored = Path(session_file).read_text(encoding="utf-8").strip()
+            session = stored or None
+        except OSError:
+            pass
+
     # Build command
     cmd = ["opencode", "run"]
     if model:
         cmd.extend(["--model", model])
+    if session or session_file:
+        cmd.extend(["--format", "json"])
+    if session:
+        cmd.extend(["-s", session])
     cmd.append(task)
 
     # Run
@@ -109,6 +205,8 @@ def opencode_delegate(
         result = subprocess.run(
             cmd, cwd=wd, env=env, capture_output=True, text=True, timeout=timeout
         )
+        if session or session_file:
+            return _render_continuation_output(result, session_file)
         output = result.stdout
         if result.stderr:
             output += f"\n--- stderr ---\n{result.stderr}"
@@ -128,12 +226,30 @@ def opencode_delegate(
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) < 2:
-        print("Usage: python opencode_delegate.py '<task>' [workdir] [model]")
+    positional = []
+    session = None
+    session_file = None
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] == "--session" and i + 1 < len(args):
+            session = args[i + 1]
+            i += 2
+        elif args[i] == "--session-file" and i + 1 < len(args):
+            session_file = args[i + 1]
+            i += 2
+        else:
+            positional.append(args[i])
+            i += 1
+
+    if not positional:
+        print("Usage: python opencode_delegate.py '<task>' [workdir] [model] "
+              "[--session <id>] [--session-file <path>]")
         sys.exit(1)
 
-    task = sys.argv[1]
-    workdir = sys.argv[2] if len(sys.argv) > 2 else "."
-    model = sys.argv[3] if len(sys.argv) > 3 else None
+    task = positional[0]
+    workdir = positional[1] if len(positional) > 1 else "."
+    model = positional[2] if len(positional) > 2 else None
 
-    print(opencode_delegate(task, workdir, model))
+    print(opencode_delegate(task, workdir, model,
+                            session=session, session_file=session_file))
