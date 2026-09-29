@@ -7317,12 +7317,14 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                     ("class:status-bar-dim", " │"),
                 ]
 
-            frags = self._right_align_status_title_fragments(frags, session_title, width)
-
             # ── Plugin status_bar_fragment hook ────────────────────────
             # Plugins (e.g. tps_monitor) can inject extra fragments here.
             # invoke_hook returns a list of callback results; each callback
             # returns a list of (style, text) tuples, so we flatten one level.
+            # Must run BEFORE _right_align_status_title_fragments: that call
+            # pads frags out to exactly `width` columns whenever a session
+            # title is set, so anything appended after it always overflows
+            # and gets silently sheared off by the trim branch below.
             try:
                 from hermes_cli.plugins import invoke_hook
                 plugin_frags = invoke_hook(
@@ -7341,6 +7343,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                                 frags.append(pf)
             except Exception:
                 pass
+
+            frags = self._right_align_status_title_fragments(frags, session_title, width)
 
             total_width = sum(self._status_bar_display_width(text) for _, text in frags)
             if total_width > width:
