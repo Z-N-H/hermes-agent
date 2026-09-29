@@ -55,16 +55,32 @@ CHECKS: list[Check] = [
           r"agent\._record_tps_token\(", min_count=2),
 
     # --- status_bar_fragment plugin hook ---
-    Check("status_bar_fragment hook invoked in cli.py", "cli.py",
+    # Upstream decomposed cli.py; _get_status_bar_fragments (with our hook) now lives
+    # in hermes_cli/cli_status_bar_mixin.py.
+    Check("status_bar_fragment hook invoked in cli_status_bar_mixin.py",
+          "hermes_cli/cli_status_bar_mixin.py",
           r'invoke_hook\(\s*\n?\s*"status_bar_fragment"'),
     Check("status_bar_fragment registered in VALID_HOOKS", "hermes_cli/plugins.py",
           r'"status_bar_fragment"'),
 
     # --- emoji -> Nerd Font icon system ---
     Check("hermes_icons.py module present", "hermes_icons.py", r"class NerdFontIcons"),
-    Check("cli.py imports ICON_BOLT", "cli.py", r"from hermes_icons import ICON_BOLT"),
-    Check("cli.py uses get_active_brand_icon (not hardcoded ⚕ everywhere)", "cli.py",
-          r"get_active_brand_icon\(\)", min_count=10),
+    # cli.py is now an upstream facade; the brand-icon sites relocated to the mixins
+    # below (ICON_BOLT import + tool-preparing default live in cli_stream_mixin.py).
+    Check("cli_stream_mixin.py imports ICON_BOLT", "hermes_cli/cli_stream_mixin.py",
+          r"from hermes_icons import ICON_BOLT"),
+    Check("cli_stream_mixin.py tool-preparing default is ICON_BOLT", "hermes_cli/cli_stream_mixin.py",
+          r"get_tool_emoji\(tool_name, default=ICON_BOLT\)"),
+    Check("cli_status_bar_mixin.py uses get_active_brand_icon (not hardcoded ☤)",
+          "hermes_cli/cli_status_bar_mixin.py", r"get_active_brand_icon\(\)", min_count=5),
+    Check("cli_stream_mixin.py uses get_active_brand_icon", "hermes_cli/cli_stream_mixin.py",
+          r"get_active_brand_icon\(\)", min_count=2),
+    Check("cli_chat_turn_mixin.py uses get_active_brand_icon", "hermes_cli/cli_chat_turn_mixin.py",
+          r"get_active_brand_icon\(\)", min_count=3),
+    Check("cli_tui_mixin.py uses get_active_brand_icon", "hermes_cli/cli_tui_mixin.py",
+          r"get_active_brand_icon\(\)"),
+    Check("cli_render.py banner uses get_active_brand_icon", "hermes_cli/cli_render.py",
+          r"get_active_brand_icon\(\)"),
     Check("cli.py tuple-style prompt_toolkit patch", "cli.py",
           r"def _apply_prompt_toolkit_tuple_style_patch"),
     Check("agent/display.py imports hermes_icons", "agent/display.py",
@@ -81,16 +97,25 @@ CHECKS: list[Check] = [
           r"def get_emoji\(self, name: str, default: str = ICON_BOLT\)"),
     Check("gateway/platforms/base.py tool-emoji default is ICON_GEAR", "gateway/platforms/base.py",
           r"get_tool_emoji\(event\.tool_name, default=ICON_GEAR\)"),
-    Check("gateway/run.py tool-emoji default is ICON_GEAR", "gateway/run.py",
+    # Upstream extracted TurnRunner out of gateway/run.py into gateway/run_turn_runner.py;
+    # the tool-emoji default moved with it.
+    Check("gateway/run_turn_runner.py tool-emoji default is ICON_GEAR", "gateway/run_turn_runner.py",
           r"get_tool_emoji\(tool_name, default=ICON_GEAR\)"),
     Check("hermes_cli/gateway.py uses get_active_brand_icon", "hermes_cli/gateway.py",
+          r"get_active_brand_icon\(\)", min_count=1),
+    # gateway_setup() relocated from hermes_cli/gateway.py to gateway_setup_wizard.py.
+    Check("hermes_cli/gateway_setup_wizard.py uses get_active_brand_icon",
+          "hermes_cli/gateway_setup_wizard.py", r"get_active_brand_icon\(\)"),
+    # The main.py brand-icon sites relocated to main_tui_launch.py (exit-42 update
+    # relaunch) and main_platform_setup.py (WhatsApp setup header + tips).
+    Check("hermes_cli/main_tui_launch.py uses get_active_brand_icon", "hermes_cli/main_tui_launch.py",
+          r"get_active_brand_icon\(\)"),
+    Check("hermes_cli/main_platform_setup.py uses get_active_brand_icon", "hermes_cli/main_platform_setup.py",
           r"get_active_brand_icon\(\)", min_count=2),
-    Check("hermes_cli/main.py uses get_active_brand_icon", "hermes_cli/main.py",
-          r"get_active_brand_icon\(\)", min_count=3),
     Check("hermes_cli/agent_import.py uses get_active_brand_icon", "hermes_cli/agent_import.py",
           r"get_active_brand_icon\(\)"),
     Check("hermes_cli/cli_billing_mixin.py uses get_active_brand_icon", "hermes_cli/cli_billing_mixin.py",
-          r"get_active_brand_icon\(\)", min_count=3),
+          r"(?:get_active_brand_icon|_brand_icon)\(\)", min_count=4),
 
     # --- uid citations on vault-sourced recall (hindsight memory plugin) ---
     Check("hindsight plugin: _uid_citation helper present", "plugins/memory/hindsight/__init__.py",
