@@ -28,6 +28,7 @@ from gateway.platforms.base import BasePlatformAdapter
 from gateway.platforms.base_exec_approval import ea_default_reason_text
 from gateway.turn_context import TurnContext
 from hermes_cli.config import cfg_get
+from hermes_icons import ICON_GEAR
 from utils import is_truthy_value
 
 if TYPE_CHECKING:  # string annotations only; never imported at runtime (cycle)
@@ -265,7 +266,7 @@ class TurnRunner:
         """Render the progress line. Verbose mode queues directly (no dedup) and returns None."""
         ctx = self._ctx
         from agent.display import get_tool_emoji
-        emoji = get_tool_emoji(tool_name, default="⚙️")
+        emoji = get_tool_emoji(tool_name, default=ICON_GEAR)
         try:
             adapter = self._runner._delivery_adapter_for(ctx.source)
         except Exception:
