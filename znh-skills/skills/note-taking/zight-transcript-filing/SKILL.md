@@ -74,6 +74,8 @@ Body: `## Transcript` is the fetched transcript text verbatim (or, if `transcrip
 
 ## Action items → tasks (only for resolved clients)
 
+**Hands off client deliverables.** Filing never sets `cu_task` on a card and never creates a task in a *client's* ClickUp list — deliverables are set deliberately by Zack or on explicit request (see the `clickup-deliverables` skill). If a capture looks like a client promise ("we'll have the October keyword research to Thankbox by Friday"), don't fulfil it: say so in the report (`looks like a Thankbox deliverable: create one?`) and let Zack decide.
+
 Same sanctioned writer as every other vault automation — never hand-write card markdown:
 ```
 /mnt/z/pantheon/vault/ZNH/scripts/vault_board.py upsert --title "..." --status open --priority <low|medium|high|critical> --assignees <owner> --client <client> --source zight --tags <topic-tags>

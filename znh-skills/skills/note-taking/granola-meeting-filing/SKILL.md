@@ -115,6 +115,8 @@ Then, as separate sections built by *this skill* (not Granola) for task tracking
 
 ## Action items → tasks (only for resolved clients)
 
+**Hands off client deliverables.** Filing never sets `cu_task` on a card and never creates a task in a *client's* ClickUp list — deliverables are set deliberately by Zack or on explicit request (see the `clickup-deliverables` skill). If a meeting note looks like a client promise ("we'll have the October keyword research to Thankbox by Friday"), don't fulfil it: say so in the report (`looks like a Thankbox deliverable: create one?`) and let Zack decide.
+
 Only when a client was confidently resolved — an action item with no client/project context is not a useful task. Each `- [ ] **Owner:** <name>` assigned to the user becomes a Kanban card.
 
 - Prefer the single sanctioned writer: `/mnt/z/pantheon/vault/ZNH/scripts/vault_board.py upsert --title "..." --status open --priority <low|medium|high|critical> --assignees <owner> --client <client> --source granola --tags meeting-action`. Don't put `client/` or `src/` in `--tags` — the writer derives them from `--client` / `--source` (without `--source granola` the card is mislabelled `src/manual`).
