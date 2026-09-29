@@ -22,6 +22,7 @@ Optional env vars:
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -322,6 +323,62 @@ def get_current_traceparent() -> Optional[str]:
         TraceContextTextMapPropagator().inject(carrier)
         return carrier.get("traceparent")
     except Exception:
+        return None
+
+
+def _traceparent_for_context(context: Optional[Any]) -> Optional[str]:
+    """Build a W3C traceparent string for an *explicit* OTel Context, not
+    ambient/"current" context.
+
+    Use this whenever a specific span object is on hand to root the
+    traceparent in (e.g. the tool.invoke span just created for this call) —
+    spans in this plugin are created via start_span() and are never attached
+    to ambient context (see _get_turn_context's docstring), so
+    get_current_traceparent()/ambient-context injection does not reliably
+    reflect any particular span.
+    """
+    if not _OTEL_AVAILABLE or TraceContextTextMapPropagator is None or context is None:
+        return None
+    try:
+        carrier: Dict[str, str] = {}
+        TraceContextTextMapPropagator().inject(carrier, context=context)
+        return carrier.get("traceparent")
+    except Exception:
+        return None
+
+
+def get_span_context_for_tool_call(tool_call_id: str, tool_name: str = "") -> Optional[Any]:
+    """Return the OTel Context of a still-open tool.invoke span.
+
+    For in-process callers only (same Python process, running between
+    on_pre_tool_call and on_post_tool_call for this tool_call_id) — e.g. a
+    tool implementation that shells out and wants to replay the subprocess's
+    own structured output as child spans of this tool call, without
+    serialising through a TRACEPARENT string (that's what the dict returned
+    by on_pre_tool_call is for, for actual cross-process propagation).
+
+    Pass the returned Context as the explicit ``context=`` kwarg on
+    start_span()/start_as_current_span(). Returns None when OTel is
+    unavailable or no matching span is currently open — callers must not
+    fall back to ambient/"current" context, which this plugin's spans are
+    never attached to.
+    """
+    if not _OTEL_AVAILABLE:
+        return None
+    key = _tool_key(tool_call_id, tool_name)
+    with _STATE_LOCK:
+        state = _SPAN_STATE.get(key)
+    if state is None:
+        return None
+    span = state.get("span")
+    if span is None:
+        return None
+    try:
+        return _otel_trace.set_span_in_context(span)
+    except Exception as exc:
+        logger.debug(
+            "phoenix plugin: failed to build context for tool call %s: %s", tool_call_id, exc
+        )
         return None
 
 
@@ -745,9 +802,15 @@ def on_pre_tool_call(
 
     _debug(f"started tool.invoke span for {key} tool={tool_name}")
 
-    # Build TRACEPARENT for subprocess propagation.
-    # Hermes tool-executor will merge this dict into the subprocess env.
-    traceparent = get_current_traceparent()
+    # Build TRACEPARENT for subprocess propagation, rooted explicitly in the
+    # span just created above — NOT ambient/"current" context, which this
+    # span was never attached to (see _get_turn_context's docstring).
+    # Hermes tool-executor merges the returned dict into the subprocess env.
+    try:
+        span_context = _otel_trace.set_span_in_context(span)
+    except Exception:
+        span_context = None
+    traceparent = _traceparent_for_context(span_context)
     if traceparent:
         return {"TRACEPARENT": traceparent}
     return None
@@ -848,6 +911,229 @@ def inject_trace_context(env: Dict[str, str]) -> Dict[str, str]:
     custom tools can propagate trace context to their subprocesses.
     """
     return _inject_traceparent_into_env(env)
+
+
+def _emit_opencode_tool_span(
+    tracer: Any, part: Dict[str, Any], parent_context: Any, session_id: str
+) -> None:
+    """Emit one child span for a single OpenCode-internal tool_use event.
+
+    Unlike hermes's own tool.invoke, an OpenCode ``tool_use`` event already
+    describes a *completed* action (state.status/input/output/time.start/
+    time.end) — there's no separate pre/post pair to bridge, so the span is
+    created and ended in one call.
+    """
+    state = part.get("state") or {}
+    time_info = state.get("time") or {}
+    tool_name = part.get("tool") or "unknown"
+
+    attrs: Dict[str, Any] = {
+        "tool.name": tool_name,
+        "tool.status": state.get("status") or "",
+    }
+    tool_input = state.get("input")
+    if tool_input is not None:
+        # OTel span attributes only accept scalar types (str/bool/int/float/
+        # bytes) or sequences of those — _safe_serialize's dict branch
+        # returns a dict, which the real SDK silently drops with a warning
+        # (not a raised error) if set directly. Must stringify.
+        attrs["input.value"] = str(_safe_serialize(tool_input, max_len=4000))[:4000]
+        attrs["input.mime_type"] = "application/json"
+    tool_output = state.get("output")
+    if tool_output is not None:
+        attrs["output.value"] = str(_safe_serialize(tool_output, max_len=8000))[:8000]
+        attrs["output.mime_type"] = "text/plain"
+
+    start_ts = time_info.get("start")
+    end_ts = time_info.get("end")
+    start_ns = int(start_ts * 1_000_000) if start_ts else None
+    end_ns = int(end_ts * 1_000_000) if end_ts else None
+
+    try:
+        span = tracer.start_span(
+            f"opencode.tool.{tool_name}",
+            context=parent_context,
+            kind=_SpanKind.INTERNAL,
+            attributes=attrs,
+            start_time=start_ns,
+        )
+    except Exception as exc:
+        logger.debug("phoenix plugin: failed to start opencode tool span for %s: %s", tool_name, exc)
+        return
+
+    _set_session_and_kind(span, session_id, "tool")
+    try:
+        if state.get("status") == "error":
+            span.set_status(_Status(_StatusCode.ERROR, description="opencode tool error"))
+        else:
+            span.set_status(_Status(_StatusCode.OK))
+        span.end(end_time=end_ns)
+    except Exception as exc:
+        logger.debug("phoenix plugin: failed to end opencode tool span for %s: %s", tool_name, exc)
+        try:
+            span.end()
+        except Exception:
+            pass
+
+
+def record_opencode_run(
+    ndjson_text: str,
+    parent_context: Optional[Any],
+    session_id: str = "",
+) -> str:
+    """Parse ``opencode run --format json`` NDJSON output, emit spans for it
+    (nested under *parent_context* — see ``get_span_context_for_tool_call``),
+    and return the reconstructed human-readable text OpenCode would have
+    printed under ``--format default`` (verified live against OpenCode
+    1.18.25: default-format stdout is exactly the concatenation of the
+    run's "text" events) — so callers can use this as a drop-in replacement
+    for the raw stdout they used to show the agent, now that stdout is
+    NDJSON instead of plain text.
+
+    Fail-open: tracing must never break OpenCode delegation, and this
+    function does no I/O of its own — it only parses *ndjson_text* and, on
+    any failure, returns "" so the caller falls back to its own handling.
+    Safe to call with OTel unavailable / phoenix not otherwise configured;
+    span creation then silently no-ops via `_get_or_create_tracer()`'s
+    NoOp-tracer fallback, but the text reconstruction below still runs
+    (it's plain string processing, independent of OTel).
+
+    Event shape (one JSON object per line), reverse-engineered from a live
+    run — undocumented, may drift across OpenCode versions:
+      {"type": "step_start"|"tool_use"|"text"|"step_finish",
+       "timestamp": <epoch ms>, "sessionID": "...", "part": {...}}
+    Events share `part.messageID` within one logical "step" (one OpenCode
+    LLM call): step_start -> [tool_use | text]* -> step_finish.
+    step_finish.part carries `tokens` (input/output/reasoning/
+    cache.read/cache.write) and `cost` (USD, float).
+    """
+    if not ndjson_text.strip():
+        return ""
+
+    try:
+        steps: Dict[str, Dict[str, Any]] = {}
+        order: list = []
+        for line in ndjson_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            part = event.get("part") if isinstance(event, dict) else None
+            if not isinstance(part, dict):
+                continue
+            message_id = part.get("messageID")
+            if not message_id:
+                continue
+
+            step = steps.get(message_id)
+            if step is None:
+                step = {
+                    "tool_events": [],
+                    "text_parts": [],
+                    "start_ts": None,
+                    "end_ts": None,
+                    "tokens": None,
+                    "cost": None,
+                    "reason": None,
+                }
+                steps[message_id] = step
+                order.append(message_id)
+
+            etype = event.get("type")
+            ts = event.get("timestamp")
+            if etype == "step_start":
+                step["start_ts"] = ts
+            elif etype == "step_finish":
+                step["end_ts"] = ts
+                step["tokens"] = part.get("tokens")
+                step["cost"] = part.get("cost")
+                step["reason"] = part.get("reason")
+            elif etype == "text":
+                text = part.get("text")
+                if text:
+                    step["text_parts"].append(text)
+            elif etype == "tool_use":
+                step["tool_events"].append(part)
+
+        if not order:
+            return ""
+
+        tracer = _get_or_create_tracer()
+        output_chunks: list = []
+
+        for message_id in order:
+            step = steps[message_id]
+            start_ts = step["start_ts"] or step["end_ts"]
+            end_ts = step["end_ts"] or step["start_ts"]
+            start_ns = int(start_ts * 1_000_000) if start_ts else None
+            end_ns = int(end_ts * 1_000_000) if end_ts else None
+
+            text = "".join(step["text_parts"])
+            if text:
+                output_chunks.append(text)
+
+            attrs: Dict[str, Any] = {
+                "gen_ai.system": "opencode",
+                "opencode.reason": step.get("reason") or "",
+            }
+            tokens = step.get("tokens")
+            if isinstance(tokens, dict):
+                if tokens.get("input"):
+                    attrs["gen_ai.usage.input_tokens"] = tokens["input"]
+                if tokens.get("output"):
+                    attrs["gen_ai.usage.output_tokens"] = tokens["output"]
+                if tokens.get("reasoning"):
+                    attrs["gen_ai.usage.reasoning_tokens"] = tokens["reasoning"]
+                cache = tokens.get("cache")
+                if isinstance(cache, dict):
+                    if cache.get("read"):
+                        attrs["gen_ai.usage.cache_read_tokens"] = cache["read"]
+                    if cache.get("write"):
+                        attrs["gen_ai.usage.cache_write_tokens"] = cache["write"]
+            if step.get("cost") is not None:
+                attrs["opencode.cost_usd"] = step["cost"]
+            if text:
+                attrs["output.value"] = _safe_serialize(text, max_len=8000)
+                attrs["output.mime_type"] = "text/plain"
+
+            try:
+                step_span = tracer.start_span(
+                    "opencode.llm.invoke",
+                    context=parent_context,
+                    kind=_SpanKind.CLIENT,
+                    attributes=attrs,
+                    start_time=start_ns,
+                )
+            except Exception as exc:
+                logger.debug("phoenix plugin: failed to start opencode.llm.invoke span: %s", exc)
+                continue
+
+            _set_session_and_kind(step_span, session_id, "llm")
+
+            try:
+                step_context = _otel_trace.set_span_in_context(step_span)
+            except Exception:
+                step_context = None
+            for tool_event in step["tool_events"]:
+                _emit_opencode_tool_span(tracer, tool_event, step_context, session_id)
+
+            try:
+                step_span.set_status(_Status(_StatusCode.OK))
+                step_span.end(end_time=end_ns)
+            except Exception as exc:
+                logger.debug("phoenix plugin: failed to end opencode.llm.invoke span: %s", exc)
+                try:
+                    step_span.end()
+                except Exception:
+                    pass
+
+        return "\n\n".join(output_chunks)
+    except Exception as exc:
+        logger.debug("phoenix plugin: failed to record opencode run: %s", exc)
+        return ""
 
 
 # ──────────────────────────────────────────────────────────────────────────
