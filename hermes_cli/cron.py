@@ -246,6 +246,8 @@ def _job_rows(job: Dict[str, Any]) -> List[tuple[str, str]]:
          if job.get("no_agent") else ""),
         ("Workdir", job.get("workdir")),
         ("Python", job.get("interpreter")),
+        ("Req. MCP tools", ", ".join(job.get("required_mcp_tools") or [])),
+        ("Req. MCP srvs", ", ".join(job.get("required_mcp_servers") or [])),
         ("Last run", f"{job.get('last_run_at', '?')}  {_last_run_display(job)}"
          if job.get("last_status") else ""),
         ("Dispatch", _dispatch_display(job.get("last_dispatch"))),
@@ -705,7 +707,9 @@ _JOB_ARG_FIELDS = (("name", "name"), ("deliver", "deliver"), ("failure_deliver",
                    ("model", "model"), ("provider", "model_provider"), ("pinned", "pinned"),
                    ("monitor_script", "monitor_script"), ("monitor_url", "monitor_url"),
                    ("continuity", "continuity"), ("reasoning_effort", "reasoning_effort"),
-                   ("interpreter", "interpreter"))
+                   ("interpreter", "interpreter"),
+                   ("required_mcp_tools", "required_mcp_tools"),
+                   ("required_mcp_servers", "required_mcp_servers"))
 
 
 def _job_api_kwargs(args) -> Dict[str, Any]:
@@ -782,10 +786,15 @@ def cron_edit(args):
     elif add_skills or remove_skills:
         final_skills = [skill for skill in existing_skills if skill not in remove_skills]
         final_skills += [skill for skill in add_skills if skill not in final_skills]
+    api_kwargs = _job_api_kwargs(args)
+    for key in ("required_mcp_tools", "required_mcp_servers"):
+        api_kwargs[key] = _normalize_skills(None, api_kwargs[key])
+        if getattr(args, "clear_required_mcp", False):
+            api_kwargs[key] = []
     result = _cron_api(action="update", job_id=args.job_id,
                        schedule=getattr(args, "schedule", None),
                        prompt=getattr(args, "prompt", None), skills=final_skills,
-                       no_agent=getattr(args, "no_agent", None), **_job_api_kwargs(args))
+                       no_agent=getattr(args, "no_agent", None), **api_kwargs)
     if not result.get("success"):
         print(color(f"Failed to update job: {result.get('error', 'unknown error')}", Colors.RED))
         return 1

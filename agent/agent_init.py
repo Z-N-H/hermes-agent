@@ -1387,6 +1387,23 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
     from agent.memory_manager import inject_memory_provider_tools
     inject_memory_provider_tools(agent)
 
+    # The built-in `memory` tool (tools/memory_tool.py) is registered globally
+    # with check_memory_requirements() always returning True, so it is not
+    # excluded by the normal toolset-availability gate. When memory_enabled
+    # and user_profile_enabled are both off (e.g. an external provider like
+    # Hindsight is the sole memory system), drop it here so the model never
+    # sees a tool that would only fail at call time with "Memory is not
+    # available" — and so it can't out-compete the external provider's own
+    # tools for the model's attention.
+    if not agent._memory_enabled and not agent._user_profile_enabled:
+        agent.tools = [
+            t for t in agent.tools
+            if not (isinstance(t, dict) and t.get("function", {}).get("name") == "memory")
+        ]
+        _valid_tool_names = getattr(agent, "valid_tool_names", None)
+        if _valid_tool_names is not None:
+            _valid_tool_names.discard("memory")
+
 
 def _apply_agent_section(agent, _agent_cfg):
     # Skills config: nudge interval for skill creation reminders
@@ -2306,6 +2323,11 @@ def _init_usage_state(agent):
     agent._subdirectory_hints = SubdirectoryHintTracker(
         working_dir=scope_terminal_cwd() or None, enabled=not agent.skip_context_files)
     _set_defaults(agent, _USAGE_STATE)
+    # TPS (tokens per second) tracking — mirrors reset_session_state() initialisation
+    agent._tps_token_count = 0
+    agent._tps_window_start = time.time()
+    agent._current_tps = 0.0
+    agent._last_tps_update = 0.0
 
 
 # Per-session usage accounting.

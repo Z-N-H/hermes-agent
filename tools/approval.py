@@ -46,6 +46,20 @@ logger = logging.getLogger(__name__)
 _YOLO_MODE_FROZEN: bool = is_truthy_value(os.getenv("HERMES_YOLO_MODE", ""))
 
 
+def get_current_tool_call_id() -> str:
+    """Return the tool_call_id bound by set_current_observability_context()
+    for the tool call currently executing on this thread/task, or "" if
+    none is bound.
+
+    Tool handlers don't otherwise receive tool_call_id (registry.dispatch()
+    passes only task_id/session_id/user_task to handler(args, **kwargs)) —
+    this contextvar, set in model_tools.py around the dispatch call, is the
+    only way a handler can correlate itself back to its own pre_tool_call
+    span (e.g. via the phoenix plugin's get_span_context_for_tool_call).
+    """
+    return approval_context._approval_tool_call_id.get()
+
+
 # --- Per-session approval state (thread-safe) -----------------------------------------------------------------------
 
 _lock = threading.Lock()

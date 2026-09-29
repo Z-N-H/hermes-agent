@@ -10,11 +10,24 @@ from unittest.mock import patch as mock_patch
 import pytest
 
 import tools.approval as approval_module
+from hermes_constants import get_hermes_home
 from tools import approval_context, approval_detection
 from tools import approval_smart
-from tools.approval import approve_session, detect_dangerous_command, detect_hardline_command, is_approved, load_permanent, prompt_dangerous_approval
+from tools.approval import (
+    approve_session,
+    detect_dangerous_command,
+    detect_hardline_command,
+    get_current_tool_call_id,
+    is_approved,
+    load_permanent,
+    prompt_dangerous_approval,
+)
 from tools.approval_context import _get_approval_mode
 from tools.approval_context import _normalize_approval_mode
+from tools.approval_context import (
+    reset_current_observability_context,
+    set_current_observability_context,
+)
 from tools.approval_smart import _smart_approve
 
 
@@ -2233,3 +2246,46 @@ class TestLifecycleGuardLaunchctlParity:
             "launchctl print system/com.apple.WindowServer",
         ):
             assert contains_gateway_lifecycle_command(cmd) is False, cmd
+
+
+class TestGetCurrentToolCallId:
+    """get_current_tool_call_id() is the only way a tool handler can learn
+    its own tool_call_id — registry.dispatch() doesn't pass it to
+    handler(args, **kwargs) at all, only task_id/session_id/user_task."""
+
+    def test_returns_empty_string_when_unset(self):
+        assert get_current_tool_call_id() == ""
+
+    def test_returns_the_bound_value(self):
+        tokens = set_current_observability_context(
+            turn_id="turn-1", tool_call_id="tc-42", session_id="sess-1",
+        )
+        try:
+            assert get_current_tool_call_id() == "tc-42"
+        finally:
+            reset_current_observability_context(tokens)
+
+    def test_restored_after_reset(self):
+        tokens = set_current_observability_context(tool_call_id="tc-42")
+        reset_current_observability_context(tokens)
+        assert get_current_tool_call_id() == ""
+
+    def test_isolated_per_thread(self):
+        """Contextvars are thread-local — a value bound on one thread must
+        not leak into another (the gateway runs turns concurrently in
+        executor threads, per this module's own contextvar docstrings)."""
+        seen = {}
+
+        def worker():
+            tokens = set_current_observability_context(tool_call_id="tc-thread")
+            try:
+                seen["thread"] = get_current_tool_call_id()
+            finally:
+                reset_current_observability_context(tokens)
+
+        assert get_current_tool_call_id() == ""
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+        assert seen["thread"] == "tc-thread"
+        assert get_current_tool_call_id() == ""

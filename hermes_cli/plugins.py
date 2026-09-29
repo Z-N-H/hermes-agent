@@ -194,6 +194,16 @@ VALID_HOOKS: Set[str] = {
     # hooks.md). Other event types and hook names land here only together with real fire-sites and payload
     # contracts; no inert VALID_HOOKS surface is registered ahead of implementation.
     "gateway_platform_event",
+    # on_process_complete: fires when a tracked background process (tools/process_registry.py)
+    # actually finishes -- unlike post_tool_call, which for a background terminal() call fires at
+    # dispatch time. Kwargs: session_id, session_key, command, cwd, exit_code, task_id, output
+    # (ANSI-stripped tail). Fires regardless of notify_on_complete, so plugins can durably record
+    # a process's outcome even when nothing in the conversation reads the completion notification.
+    "on_process_complete",
+    # status_bar_fragment: fires every render tick when the TUI status bar is visible. Plugins
+    # return a list of (style, text) tuples to inject into the status bar, or None/[] for nothing.
+    # Kwargs: cli: HermesCLI instance, agent: AIAgent or None.
+    "status_bar_fragment",
     # pre_command: BEFORE a recognized slash command's handler on CLI and gateway canonical dispatch;
     # returns IGNORED in v1. Deliberately NOT fired for the gateway's running-agent intercept path
     # (/stop, /approve, busy_policy) — a slow/hostile plugin must not touch the operator's escape

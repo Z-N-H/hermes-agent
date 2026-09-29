@@ -306,6 +306,25 @@ native/fts5_cjk/*.so
 # interrupted; consumed by launch-time recovery. Never commit it (was tracked
 # by accident via 3a69e34702, removed in the #72002 salvage).
 .lazy-refresh-incomplete
+<<<<<<< HEAD
+
+# Pantheon (auto-managed — do not remove)
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+*TASK-BRIEF.md
+.task.json
+.claude/
+.opencode/
+tailscale/
+
+# Pantheon (auto-managed — do not remove)
+.opencode-events.jsonl
+.opencode-run.log
+.opencode-stderr.log
+PROJECT_KNOWLEDGE
+READ_ONLY_REFERENCE_CODE
+=======
 .skills_prompt_snapshot.json
 
 # Disposable profile created by scripts/probe_active_session_exclusivity.py
@@ -319,3 +338,4 @@ native/fts5_cjk/*.so
 /pm/.lock.json.lock
 
 apps/desktop/.dist-build*
+>>>>>>> upstream/main

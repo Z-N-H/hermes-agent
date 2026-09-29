@@ -684,6 +684,7 @@ def _action_create(a: Dict[str, Any]) -> str:
             script=_normalize_optional_job_value(script), context_from=context_from,
             enabled_toolsets=a["enabled_toolsets"] or None, workdir=_normalize_optional_job_value(a["workdir"]),
             no_agent=_no_agent, attach_to_session=a["attach_to_session"],
+            required_mcp_tools=a["required_mcp_tools"], required_mcp_servers=a["required_mcp_servers"],
             monitor_script=_normalize_optional_job_value(a["monitor_script"]),
             monitor_url=_normalize_optional_job_value(a["monitor_url"]),
             # CLI-only lane: absent from CRONJOB_SCHEMA and the model dispatch (models don't pick models).
@@ -899,6 +900,10 @@ def _update_run_fields(job: Dict[str, Any], a: Dict[str, Any], updates: Dict[str
         updates["enabled_toolsets"] = a["enabled_toolsets"] or None
     if a["attach_to_session"] is not None:
         updates["attach_to_session"] = bool(a["attach_to_session"])
+    if a["required_mcp_tools"] is not None:
+        updates["required_mcp_tools"] = a["required_mcp_tools"] or None
+    if a["required_mcp_servers"] is not None:
+        updates["required_mcp_servers"] = a["required_mcp_servers"] or None
     if a["workdir"] is not None:
         # Empty string clears; otherwise update_job() validates/normalizes.
         updates["workdir"] = _normalize_optional_job_value(a["workdir"]) or None
@@ -996,6 +1001,8 @@ def cronjob(
     workdir: Optional[str] = None,
     no_agent: Optional[bool] = None,
     attach_to_session: Optional[bool] = None,
+    required_mcp_tools: Optional[List[str]] = None,
+    required_mcp_servers: Optional[List[str]] = None,
     monitor_script: Optional[str] = None,
     monitor_url: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
@@ -1129,6 +1136,16 @@ Jobs run in a fresh session with no current-chat context, so prompts must be sel
                 "type": "string",
                 "description": "Optional absolute existing path to run the job from: injects that directory's AGENTS.md/context files and anchors terminal/file tools there. On update, '' clears."
             },
+            "required_mcp_tools": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of MCP tool names/patterns (glob supported, e.g. [\"granola_*\"]) this job cannot do its work without. At fire time the scheduler verifies every pattern against the discovered MCP tools and, if any has no match, fails the run BEFORE the agent turn — no LLM call, no inference spend, and the failure is alerted. Use for jobs whose whole purpose is an MCP capability. When omitted on create, the requirement is inherited from attached skills' frontmatter (required_mcp_tools) if any. Jobs with no declaration keep the legacy non-fatal MCP behavior. On update, pass an empty array to clear."
+            },
+            "required_mcp_servers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of MCP server names (the mcp_servers config keys, e.g. [\"pantheon\"]) that must be connected at fire time, with the same fail-before-inference semantics as required_mcp_tools. Inherits from attached skills' frontmatter on create when omitted. On update, pass an empty array to clear."
+            },
             "attach_to_session": {
                 "type": "boolean",
                 "description": "True = the job's delivery is CONTINUABLE — the user can reply and the agent has the brief in context (threads on thread-capable platforms, mirrored into the DM elsewhere). Use for conversational recurring jobs (briefings); leave unset for fire-and-forget alerts. Scope: the job's own conversation only — the origin chat, the home-channel fallback when deliver='origin' captured no origin (script-created jobs), a user-written bare platform target (deliver='slack' — that platform's home channel), or the job's single explicit platform:chat target (this flag is the only way to attach an explicit target). Broadcast targets are never attached; no effect when deliver='local'."
@@ -1161,7 +1178,7 @@ def check_cronjob_requirements() -> bool:
 _HANDLER_FORWARDED_ARGS = (
     "job_id", "prompt", "schedule", "name", "repeat", "deliver", "failure_deliver", "skill", "skills", "reason",
     "script", "context_from", "continuity", "enabled_toolsets", "workdir", "no_agent", "attach_to_session",
-    "paused_reason", "pinned")
+    "required_mcp_tools", "required_mcp_servers", "paused_reason", "pinned")
 
 
 def _cronjob_handler(args, **kw):

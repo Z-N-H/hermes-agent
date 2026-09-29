@@ -340,7 +340,12 @@ class CLITuiMixin:
         if self._command_running:
             return _state_fragment("class:prompt-working", self._command_spinner_frame())
         if self._agent_running:
-            return _state_fragment("class:prompt-working", "☤")
+            try:
+                from hermes_cli.skin_engine import get_active_brand_icon
+                _icon = get_active_brand_icon()
+            except Exception:
+                _icon = "⚕"
+            return _state_fragment("class:prompt-working", _icon)
         if self._voice_mode:
             return _state_fragment("class:voice-prompt", "🎤")
         return [("class:prompt", symbol)]

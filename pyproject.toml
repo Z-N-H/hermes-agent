@@ -259,6 +259,7 @@ piper = [
 modal = ["modal==1.5.5"]
 daytona = ["daytona==0.155.0"]
 vercel = ["vercel==0.7.2"]
+hindsight = ["hindsight-client==0.6.1"]
 google-meet = ["playwright==1.62.0", "websockets==15.0.1"]
 messaging = [
   "python-telegram-bot[webhooks]==22.8",
@@ -285,7 +286,6 @@ matrix = [
   "aiohttp-socks==0.11.0; sys_platform == 'linux'",
   "aiohttp==3.14.3; sys_platform == 'linux'",
 ] # aiohttp 3.14.3: prior CVEs + GHSA-cq5v-8q36-5273/GHSA-mfx4-hv73-q22v/GHSA-mq44-7p77-q5h7 (mautrix/aiohttp-socks only cap aiohttp<4 / >=3.10, so pin the patched floor directly)
-
 # WeCom callback-mode adapter — parses untrusted XML POST bodies from
 # WeCom-controlled callback endpoints, so we use defusedxml (drop-in
 # replacement for stdlib xml.etree.ElementTree) to block billion-laughs
@@ -548,8 +548,8 @@ dev = [
   "starlette==1.3.1",
   "ty==0.0.82",
   "ruff==0.15.10",
-  "setuptools==83.0.0",
-] # starlette: CVE-2026-48710; setuptools: 83 (torch >=2.13 requires setuptools 83)
+  "setuptools==81.0.0",
+] # starlette: CVE-2026-48710; setuptools: 81 (deployment torch 2.12 caps setuptools <82)
 # Native launcher and provider-catalog E2E dependencies belong in the test
 # environment, not the core runtime. Keep the Anthropic SDK at the same
 # reviewed version as the optional runtime extra above.
@@ -869,6 +869,11 @@ markers = [
 # integration tests take way too long to run in the normal CI environments
 addopts = "-m 'not integration and not live'"
 
+[tool.ty.src]
+# Captured personal assets — excluded from ruff for the same reason; ty's
+# exclude key lives under [tool.ty.src].
+exclude = ["znh-plugins", "znh-skills"]
+
 [tool.ty.environment]
 python-version = "3.13"
 
@@ -877,7 +882,17 @@ unknown-argument = "warn"
 redundant-cast = "ignore"
 
 [tool.ruff]
-preview = true # required for PLW1514 (unspecified-encoding) — preview rule
+preview = true  # required for PLW1514 (unspecified-encoding) — preview rule
+# Captured personal assets (znh-plugins/, znh-skills/) are snapshots of
+# live-but-untracked user code — their own conventions, by design (see their
+# READMEs). Linting/formatting them produces churn without changing anything
+# upstream cares about, exactly like skills//optional-skills//plugins/ below.
+extend-exclude = ["znh-plugins", "znh-skills"]
+# The Pantheon quality gate passes znh-plugins//znh-skills/ explicitly as
+# format targets (project registry format_paths); without force-exclude an
+# explicitly-passed path bypasses extend-exclude and the gate would reformat
+# the captured snapshots on every run.
+force-exclude = true
 
 [tool.ruff.lint]
 # All other lints are intentionally disabled (see comment history on this
@@ -931,6 +946,8 @@ select = ["PLW1514", "ASYNC210", "ASYNC220", "ASYNC221", "ASYNC251", "TID251"]
 # Plugin platform adapters run ON the gateway event loop — the ASYNC gate
 # applies to them with full force; only PLW1514 stays relaxed.
 "plugins/**" = ["PLW1514"]
+"znh-skills/**" = ["PLW1514"]
+"znh-plugins/**" = ["PLW1514"]
 # ---------------------------------------------------------------------------
 # ASYNC ratchet baseline — legacy blocking sites that predate the gate.
 # Each entry is an EXISTING violation being fixed in its own PR; do NOT add

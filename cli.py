@@ -707,6 +707,51 @@ _strip_leaked_bracketed_paste_wrappers = _lazy_shim(
 )
 
 
+def _apply_prompt_toolkit_tuple_style_patch() -> None:
+    """Patch prompt_toolkit's Char to coerce tuple styles into strings.
+
+    Hermes occasionally triggers a traceback in ``Screen.fill_area``:
+    ``can only concatenate str (not tuple) to str``.  The root cause is
+    that a ``Char`` is created with ``style`` set to a tuple instead of a
+    string.  When ``fill_area`` later prepends/appends style classes by
+    doing ``prepend_style + cell.style + append_style``, the tuple breaks
+    the concatenation.
+
+    Rather than hunt every fragment generator, we defensively coerce
+    tuple styles to space-joined strings at the ``Char`` constructor.
+    This is idempotent — repeated calls are no-ops via a sentinel.
+    """
+    try:
+        from prompt_toolkit.layout.screen import Char as _PtChar
+
+        if getattr(_PtChar, "_hermes_tuple_style_patched", False):
+            return
+
+        _orig_char_init = _PtChar.__init__
+
+        def _patched_char_init(self, char: str = " ", style: str = "") -> None:
+            if isinstance(style, tuple):
+                import traceback
+                logger.warning(
+                    "prompt_toolkit Char created with tuple style: %r. "
+                    "Stack trace follows (this is the real source of the bug).",
+                    style,
+                )
+                for line in traceback.format_stack():
+                    logger.warning(line.rstrip())
+                style = " ".join(str(s) for s in style)
+            _orig_char_init(self, char, style)
+
+        _PtChar.__init__ = _patched_char_init
+        _PtChar._hermes_tuple_style_patched = True
+    except Exception:
+        pass
+
+
+# znh/custom bugfix: must be in place before any prompt_toolkit screen rendering.
+_apply_prompt_toolkit_tuple_style_patch()
+
+
 # OSC sequences (e.g. OSC-8 links): pt's ANSI parser strips the ESC but leaks the payload as text.
 _OSC_ESCAPE_RE = re.compile(r"\x1b\][\s\S]*?(?:\x07|\x1b\\)")
 

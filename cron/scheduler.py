@@ -1809,6 +1809,106 @@ def _load_credential_pool(runtime: dict, job_id: str):
     return None
 
 
+def _connected_mcp_server_names() -> set:
+    """Names of MCP servers currently connected (registered, no connect error)."""
+    try:
+        from tools import mcp_tool as _mt
+        servers = getattr(_mt, "_servers", None) or {}
+        errors = getattr(_mt, "_server_connect_errors", None) or {}
+        return {name for name in servers if name not in errors}
+    except Exception:
+        logger.debug("Failed to inspect MCP server connection state", exc_info=True)
+        return set()
+
+
+def _check_required_mcp(
+    job: dict,
+    discovered_tools: list,
+    *,
+    discovery_error: Optional[str] = None,
+) -> Optional[str]:
+    """Enforce a job's declared required_mcp_tools / required_mcp_servers.
+
+    A job whose whole purpose is an MCP capability (e.g. granola-meeting-
+    scanner needs granola's tools) currently still gets its LLM turn when that
+    capability is down — the MCP init above is deliberately non-fatal (#4219),
+    which is right for jobs that don't need MCP, but means a broken MCP costs
+    a full inference turn that wanders and can report a hollow success.
+
+    Jobs that DECLARE a requirement (``required_mcp_tools`` /, e.g.
+    ``["granola_*"]``; ``required_mcp_servers``, e.g. ``["pantheon"]`` — set
+    explicitly at creation or inherited from skill frontmatter) get the
+    opposite policy: verify BEFORE ``AIAgent`` is constructed, and on any
+    miss return an error string the caller raises as RuntimeError, so the
+    standard failure path marks the run errored and delivers the alert with
+    zero inference spend. Jobs declaring nothing return None and keep the
+    non-fatal behavior unchanged.
+
+    ``discovered_tools`` is the name list from ``discover_mcp_tools()``;
+    tool requirements match with fnmatch globs so ``granola_*`` covers every
+    tool that server exposes. ``discovery_error`` set means discovery itself
+    raised: the requirement then cannot be verified, so we fail closed rather
+    than gamble an inference turn on an unknown tool landscape.
+    """
+    required_tools = [str(p).strip() for p in (job.get("required_mcp_tools") or []) if str(p).strip()]
+    required_servers = [str(s).strip() for s in (job.get("required_mcp_servers") or []) if str(s).strip()]
+    if not required_tools and not required_servers:
+        return None
+
+    if discovery_error is not None:
+        declared = required_tools + [f"server:{s}" for s in required_servers]
+        return (
+            f"Required MCP capabilities could not be verified — MCP discovery "
+            f"failed ({discovery_error}), and this job declares requirements it "
+            f"cannot run without ({', '.join(declared)}). Run aborted before the "
+            f"agent turn; no inference call was made. Fix the MCP connection, "
+            f"then re-trigger the job (or remove the required_mcp_tools / "
+            f"required_mcp_servers declaration if the requirement no longer applies)."
+        )
+
+    import fnmatch
+
+    missing_parts: list[str] = []
+    if required_tools:
+        available = {str(t) for t in discovered_tools or []}
+        missing_tools = [
+            pattern
+            for pattern in required_tools
+            if not any(fnmatch.fnmatchcase(name, pattern) for name in available)
+        ]
+        if missing_tools:
+            missing_parts.append(
+                "required MCP tool(s) unavailable: " + ", ".join(missing_tools)
+            )
+    if required_servers:
+        connected = _connected_mcp_server_names()
+        missing_servers = [s for s in required_servers if s not in connected]
+        if missing_servers:
+            missing_parts.append(
+                "required MCP server(s) unavailable: " + ", ".join(missing_servers)
+            )
+    if not missing_parts:
+        return None
+    return (
+        "; ".join(missing_parts)
+        + ". Run aborted BEFORE the agent turn — no inference call was made. "
+        "Fix the MCP connection / re-auth, then re-trigger the job (or remove "
+        "the required_mcp_tools / required_mcp_servers declaration from the job "
+        "if the requirement no longer applies)."
+    )
+
+
+
+def _discover_mcp_tools_for_required_check() -> tuple[list, "Optional[str]"]:
+    """Discovery snapshot for the required_mcp guard: runs AFTER
+    ``_init_cron_mcp_tools`` (registry wired), idempotent on already-connected
+    servers. Returns ``(tools, None)`` on success, ``([], error)`` on failure."""
+    try:
+        from tools.mcp_tool_discovery import discover_mcp_tools
+        return discover_mcp_tools() or [], None
+    except Exception as exc:
+        return [], str(exc)
+
 def _init_cron_mcp_tools(job_id: str) -> None:
     """Register MCP servers for the agent's tool registry. Idempotent across ticks; non-fatal so a
     broken MCP server never kills a working job."""
@@ -2406,6 +2506,22 @@ def _resolve_cron_agent_setup(job: dict, job_id: str, job_name: str, jc) -> _Cro
         _mcp_reason = _empty_requested_mcp_toolsets(job, _cfg)
         if _mcp_reason:
             setup.blocked = _blocked_config_result(job_id, job_name, _mcp_reason)
+    # ...UNLESS the job declares required MCP tools/servers: then the run
+    # is pointless without them, so fail HARD here — before AIAgent is
+    # constructed and a single inference token is spent. Raising routes
+    # into the standard failure path: run marked errored, alert delivered.
+    # See _check_required_mcp.
+    _mcp_tools, _mcp_discovery_error = _discover_mcp_tools_for_required_check()
+    _required_mcp_error = _check_required_mcp(
+        job, _mcp_tools, discovery_error=_mcp_discovery_error
+    )
+    if _required_mcp_error:
+        logger.warning(
+            "Job '%s': SKIPPED — %s",
+            job_id,
+            _required_mcp_error,
+        )
+        raise RuntimeError(_required_mcp_error)
     return setup
 
 

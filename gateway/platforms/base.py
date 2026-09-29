@@ -21,6 +21,7 @@ from abc import ABC, abstractmethod
 from urllib.parse import urlsplit
 
 from utils import normalize_proxy_url
+from hermes_icons import ICON_GEAR
 from agent.i18n import t
 from agent.retry_utils import jittered_backoff
 from agent.proxy_bypass import first_proxy_env_value, should_bypass_proxy as _should_bypass_proxy
@@ -2066,7 +2067,7 @@ class BasePlatformAdapter(ABC):
         if not isinstance(event, ToolCallChunk):
             return None
         from agent.display import get_tool_emoji, prepare_tool_preview
-        emoji, tool = get_tool_emoji(event.tool_name, default='⚙️'), event.tool_name
+        emoji, tool = get_tool_emoji(event.tool_name, default=ICON_GEAR), event.tool_name
         if mode == "verbose" and event.args:
             import json
             args_str = json.dumps(event.args, ensure_ascii=False, default=str)

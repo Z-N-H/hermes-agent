@@ -137,7 +137,12 @@ def cmd_whatsapp(args):
     _require_tty("whatsapp")
     from hermes_cli.config import get_env_value, save_env_value
     from hermes_constants import find_node_executable, with_hermes_node_path
-    _say("", "☤ WhatsApp Setup", "=" * 50)
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
+    _say("", f"{_icon} WhatsApp Setup", "=" * 50)
 
     wa_mode = _whatsapp_choose_mode(get_env_value, save_env_value)
     if wa_mode is None:
@@ -210,16 +215,21 @@ def cmd_whatsapp(args):
     # Only enable WhatsApp now that pairing actually succeeded (see above).
     save_env_value("WHATSAPP_ENABLED", "true")
     _say("✓ WhatsApp paired successfully!", "")
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
     if wa_mode == "bot":
         _say("  Next steps:", "    1. Start the gateway:  hermes gateway",
              "    2. Send a message to the bot's WhatsApp number",
              "    3. The agent will reply automatically", "",
-             "  Tip: Agent responses are prefixed with '☤ Hermes Agent'")
+             f"  Tip: Agent responses are prefixed with '{_icon} Hermes Agent'")
     else:
         _say("  Next steps:", "    1. Start the gateway:  hermes gateway",
              "    2. Open WhatsApp → Message Yourself",
              "    3. Type a message — the agent will reply", "",
-             "  Tip: Agent responses are prefixed with '☤ Hermes Agent'",
+             f"  Tip: Agent responses are prefixed with '{_icon} Hermes Agent'",
              "  so you can tell them apart from your own messages.")
     _say("", "  Or install as a service: hermes gateway install")
 

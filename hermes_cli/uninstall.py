@@ -26,6 +26,15 @@ def _print_box(middle: str, col: str) -> None:
     print(color("└─────────────────────────────────────────────────────────┘", col, Colors.BOLD))
 
 
+def _brand_icon() -> str:
+    """Active skin's brand glyph; default glyph when the skin engine is unavailable."""
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        return get_active_brand_icon()
+    except Exception:
+        return "⚕"
+
+
 def _prompt(text: str):
     """``input(text).strip().lower()``; None (after printing "Cancelled.") on Ctrl-C/EOF."""
     try:
@@ -706,7 +715,7 @@ def run_gui_uninstall(args):
     skip_confirm = bool(getattr(args, "yes", False))
 
     print()
-    _print_box("│         ☤ Hermes Chat GUI Uninstaller                  │", Colors.MAGENTA)
+    _print_box(f"│         {_brand_icon()} Hermes Chat GUI Uninstaller                  │", Colors.MAGENTA)
     print()
 
     if not summary["gui_installed"]:
@@ -777,7 +786,7 @@ def run_uninstall(args):
         return
 
     print()
-    _print_box("│            ☤ Hermes Agent Uninstaller                  │", Colors.MAGENTA)
+    _print_box(f"│            {_brand_icon()} Hermes Agent Uninstaller                  │", Colors.MAGENTA)
     print()
 
     # Show what will be affected
@@ -1129,7 +1138,7 @@ def _perform_uninstall(
     for line, col in _RELOAD_HINT[windows]:
         print(color(line, col) if col else line)
     print()
-    print("Thank you for using Hermes Agent! ☤")
+    print(f"Thank you for using Hermes Agent! {_brand_icon()}")
     print()
 
 

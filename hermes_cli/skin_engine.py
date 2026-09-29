@@ -70,7 +70,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "ui_label": "#DAA520", "ui_ok": "#4caf50", "ui_error": "#ef5350", "ui_warn": "#ffa726",
             "prompt": "#FFF8DC", "input_rule": "#CD7F32", "response_border": "#FFD700",
             "status_bar_bg": "#1a1a2e", "status_bar_text": "#C0C0C0",
-            "status_bar_strong": "#FFD700", "status_bar_dim": "#8A7A4A",
+            "status_bar_strong": "#FFD700", "status_bar_model": "#FF69B4", "status_bar_dim": "#8A7A4A",
             "status_bar_good": "#8FBC8F", "status_bar_warn": "#FFD700", "status_bar_bad": "#FF8C00",
             "status_bar_critical": "#FF6B6B", "session_label": "#DAA520",
             "session_border": "#8B8682", "completion_menu_bg": "#1a1a2e",
@@ -102,7 +102,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "ui_label": "#C7A96B", "ui_ok": "#4caf50", "ui_error": "#ef5350", "ui_warn": "#ffa726",
             "prompt": "#F1E6CF", "input_rule": "#A93333", "response_border": "#C7A96B",
             "status_bar_bg": "#2A1212", "status_bar_text": "#F1E6CF",
-            "status_bar_strong": "#C7A96B", "status_bar_dim": "#756054",
+            "status_bar_strong": "#C7A96B", "status_bar_model": "#FF85A2", "status_bar_dim": "#756054",
             "status_bar_good": "#7BC96F", "status_bar_warn": "#C7A96B", "status_bar_bad": "#DD4A3A",
             "status_bar_critical": "#EF5350", "session_label": "#C7A96B",
             "session_border": "#6E584B", "completion_menu_bg": "#2A1212",
@@ -146,7 +146,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "ui_label": "#888888", "ui_ok": "#888888", "ui_error": "#cccccc", "ui_warn": "#999999",
             "prompt": "#c9d1d9", "input_rule": "#606060", "response_border": "#aaaaaa",
             "status_bar_bg": "#1F1F1F", "status_bar_text": "#C9D1D9",
-            "status_bar_strong": "#E6EDF3", "status_bar_dim": "#777777",
+            "status_bar_strong": "#E6EDF3", "status_bar_model": "#FF69B4", "status_bar_dim": "#777777",
             "status_bar_good": "#B5B5B5", "status_bar_warn": "#AAAAAA", "status_bar_bad": "#D0D0D0",
             "status_bar_critical": "#F0F0F0", "session_label": "#888888",
             "session_border": "#5E5E5E", "completion_menu_bg": "#1F1F1F",
@@ -163,7 +163,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "ui_label": "#8EA8FF", "ui_ok": "#63D0A6", "ui_error": "#F7A072", "ui_warn": "#e6a855",
             "prompt": "#c9d1d9", "input_rule": "#4169e1", "response_border": "#7eb8f6",
             "status_bar_bg": "#151C2F", "status_bar_text": "#C9D1D9",
-            "status_bar_strong": "#7EB8F6", "status_bar_dim": "#5D6672",
+            "status_bar_strong": "#7EB8F6", "status_bar_model": "#FF69B4", "status_bar_dim": "#5D6672",
             "status_bar_good": "#63D0A6", "status_bar_warn": "#E6A855", "status_bar_bad": "#F7A072",
             "status_bar_critical": "#FF7A7A", "session_label": "#7eb8f6",
             "session_border": "#545E6B", "completion_menu_bg": "#151C2F",
@@ -179,7 +179,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "ui_label": "#0F766E", "ui_ok": "#15803D", "ui_error": "#B91C1C", "ui_warn": "#B45309",
             "prompt": "#111827", "input_rule": "#6E94BE", "response_border": "#2563EB",
             "status_bar_bg": "#E5EDF8", "status_bar_text": "#111827",
-            "status_bar_strong": "#2563EB", "status_bar_dim": "#838890",
+            "status_bar_strong": "#2563EB", "status_bar_model": "#FF69B4", "status_bar_dim": "#838890",
             "status_bar_good": "#15803D", "status_bar_warn": "#B45309", "status_bar_bad": "#B45309",
             "status_bar_critical": "#B91C1C", "session_label": "#1D4ED8",
             "session_border": "#64748B", "completion_menu_bg": "#F8FAFC",
@@ -198,7 +198,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "ui_label": "#5C3D11", "ui_ok": "#2E7D32", "ui_error": "#C62828", "ui_warn": "#E65100",
             "prompt": "#2C1810", "input_rule": "#8B6914", "response_border": "#8B6914",
             "status_bar_bg": "#F5F0E8", "status_bar_text": "#2C1810",
-            "status_bar_strong": "#8B4513", "status_bar_dim": "#8A8F98",
+            "status_bar_strong": "#8B4513", "status_bar_model": "#FF69B4", "status_bar_dim": "#8A8F98",
             "status_bar_good": "#2E7D32", "status_bar_warn": "#E65100", "status_bar_bad": "#DA4D00",
             "status_bar_critical": "#C62828", "session_label": "#5C3D11",
             "session_border": "#A0845C", "completion_menu_bg": "#F5EFE0",
@@ -214,7 +214,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "ui_label": "#A9DFFF", "ui_ok": "#4caf50", "ui_error": "#ef5350", "ui_warn": "#ffa726",
             "prompt": "#EAF7FF", "input_rule": "#2A6FB9", "response_border": "#5DB8F5",
             "status_bar_bg": "#0F2440", "status_bar_text": "#EAF7FF",
-            "status_bar_strong": "#A9DFFF", "status_bar_dim": "#52708A",
+            "status_bar_strong": "#A9DFFF", "status_bar_model": "#FF69B4", "status_bar_dim": "#52708A",
             "status_bar_good": "#6ED7B0", "status_bar_warn": "#5DB8F5", "status_bar_bad": "#3576BC",
             "status_bar_critical": "#D94F4F", "session_label": "#A9DFFF",
             "session_border": "#496884", "completion_menu_bg": "#0F2440",
@@ -258,7 +258,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "ui_label": "#D3D3D3", "ui_ok": "#919191", "ui_error": "#E7E7E7", "ui_warn": "#B7B7B7",
             "prompt": "#F5F5F5", "input_rule": "#656565", "response_border": "#B7B7B7",
             "status_bar_bg": "#202020", "status_bar_text": "#D3D3D3",
-            "status_bar_strong": "#F5F5F5", "status_bar_dim": "#6D6D6D",
+            "status_bar_strong": "#F5F5F5", "status_bar_model": "#FF69B4", "status_bar_dim": "#6D6D6D",
             "status_bar_good": "#B7B7B7", "status_bar_warn": "#D3D3D3", "status_bar_bad": "#E7E7E7",
             "status_bar_critical": "#F5F5F5", "session_label": "#919191",
             "session_border": "#656565", "completion_menu_bg": "#202020",
@@ -303,7 +303,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "ui_label": "#FFD39A", "ui_ok": "#4caf50", "ui_error": "#ef5350", "ui_warn": "#ffa726",
             "prompt": "#FFF0D4", "input_rule": "#C75B1D", "response_border": "#F29C38",
             "status_bar_bg": "#2B160E", "status_bar_text": "#FFF0D4",
-            "status_bar_strong": "#FFD39A", "status_bar_dim": "#826144",
+            "status_bar_strong": "#FFD39A", "status_bar_model": "#FF85A2", "status_bar_dim": "#826144",
             "status_bar_good": "#6BCB77", "status_bar_warn": "#F29C38", "status_bar_bad": "#E2832B",
             "status_bar_critical": "#EF5350", "session_label": "#FFD39A",
             "session_border": "#7B593A", "completion_menu_bg": "#0B0503",
@@ -503,6 +503,7 @@ _STYLE_PALETTE = (
     ("dim", "banner_dim", "#555555"), ("label", "ui_label", "@title"), ("warn", "ui_warn", "#FF8C00"),
     ("error", "ui_error", "#FF6B6B"), ("status_bg", "status_bar_bg", "#1a1a2e"),
     ("status_text", "status_bar_text", "@text"), ("status_strong", "status_bar_strong", "@title"),
+    ("status_model", "status_bar_model", "#FF69B4"),
     ("status_dim", "status_bar_dim", "@dim"), ("ok", "ui_ok", "#8FBC8F"),
     ("status_good", "status_bar_good", "@ok"), ("status_warn", "status_bar_warn", "@warn"),
     ("accent", "banner_accent", "@warn"), ("status_bad", "status_bar_bad", "@accent"),
@@ -516,7 +517,7 @@ _STYLE_TEMPLATES = {
     "input-area": "",  # terminal default fg/bg — `prompt` styles the symbol, NOT typed text
     "placeholder": "{dim} italic", "prompt": "{prompt}", "prompt-working": "{dim} italic",
     "hint": "{dim} italic",
-    "status-bar": "bg:{status_bg} {status_text}", "status-bar-strong": "bg:{status_bg} {status_strong} bold",
+    "status-bar": "bg:{status_bg} {status_text}", "status-bar-strong": "bg:{status_bg} {status_strong} bold", "status-bar-model": "bg:{status_bg} {status_model} bold",
     "status-bar-session-title": "bg:{badge_bg} {badge_fg} bold",
     "status-bar-dim": "bg:{status_bg} {status_dim}", "status-bar-good": "bg:{status_bg} {status_good} bold",
     "status-bar-warn": "bg:{status_bg} {status_warn} bold", "status-bar-bad": "bg:{status_bg} {status_bad} bold",
@@ -537,6 +538,19 @@ _STYLE_TEMPLATES = {
     "approval-border": "{input_rule}", "approval-title": "{warn} bold", "approval-desc": "{text} bold",
     "approval-cmd": "{dim} italic", "approval-choice": "{dim}", "approval-selected": "{title} bold",
     "voice-status": "bg:{voice_bg} {label}", "voice-status-recording": "bg:{voice_bg} {error} bold"}
+
+
+def get_active_brand_icon(fallback: str = "⚕") -> str:
+    """Get the brand icon glyph from the active skin's response label."""
+    try:
+        raw = get_active_skin().get_branding("response_label", fallback)
+    except Exception:
+        raw = fallback
+
+    cleaned = (raw or fallback).strip()
+
+    return cleaned.split(" ", 1)[0] or fallback.strip()
+
 
 
 def get_prompt_toolkit_style_overrides() -> Dict[str, str]:

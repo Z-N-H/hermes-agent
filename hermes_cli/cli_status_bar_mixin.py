@@ -1021,6 +1021,7 @@ class CLIStatusBarMixin:
         ``(style, text)`` fragments. Shared by the plain-text and prompt_toolkit renderers so
         the two can never drift; ``styled`` selects the graphical context bar."""
         from cli import format_token_count_compact
+        from hermes_cli.skin_engine import get_active_brand_icon
         model_short = snapshot["model_short"]
         duration_label = snapshot["duration"]
         goal_segment = self._status_bar_goal_segment(snapshot)
@@ -1042,9 +1043,9 @@ class CLIStatusBarMixin:
 
         if _ok("model"):
             if styled:
-                segs.append([(_SB, " ☤ "), (_STRONG, model_short)])
+                segs.append([(_SB, f" {get_active_brand_icon()} "), (_STRONG, model_short)])
             else:
-                segs.append([("", f"☤ {model_short}")])
+                segs.append([("", f"{get_active_brand_icon()} {model_short}")])
         narrow, wide = width < 52, width >= 76
         if narrow:
             # Narrow bars put duration ahead of the goal segment; the other tiers reverse it.
@@ -1110,6 +1111,7 @@ class CLIStatusBarMixin:
         """Compact one-line session status string for the TUI footer."""
         try:
             snapshot = self._get_status_bar_snapshot()
+            from hermes_cli.skin_engine import get_active_brand_icon
             if width is None:
                 width = self._get_tui_terminal_width()
             model_short = snapshot["model_short"]
@@ -1119,7 +1121,7 @@ class CLIStatusBarMixin:
             session_title = (snapshot.get("session_title") or "") if show_title else ""
             segs = self._status_bar_segments(
                 snapshot, width, field_set, self._is_session_yolo_active(), styled=False)
-            parts = ["".join(t for _, t in seg) for seg in segs] or [f"☤ {model_short}"]
+            parts = ["".join(t for _, t in seg) for seg in segs] or [f"{get_active_brand_icon()} {model_short}"]
             # Narrow bars always join the battery with │; wider tiers use the tier separator.
             if battery_label:
                 parts.insert(0, battery_label)
@@ -1129,7 +1131,12 @@ class CLIStatusBarMixin:
                 text = (" · " if width < 76 else " │ ").join(parts)
             return self._right_align_status_title(text, session_title, width)
         except Exception:
-            return f"☤ {self.model if getattr(self, 'model', None) else 'Hermes'}"
+            try:
+                from hermes_cli.skin_engine import get_active_brand_icon
+                _icon = get_active_brand_icon()
+            except Exception:
+                _icon = "⚕"
+            return f"{_icon} {self.model if getattr(self, 'model', None) else 'Hermes'}"
 
     def _get_status_bar_fragments(self):
         if (
@@ -1139,6 +1146,7 @@ class CLIStatusBarMixin:
             return []
         try:
             snapshot = self._get_status_bar_snapshot()
+            from hermes_cli.skin_engine import get_active_brand_icon
             # prompt_toolkit's own width: shutil's can be stale (esp. over SSH) and an overflow
             # produces duplicated status-bar rows over long sessions.
             width = self._get_tui_terminal_width()
@@ -1152,7 +1160,7 @@ class CLIStatusBarMixin:
                 snapshot, width, field_set, self._is_session_yolo_active(), styled=True)
             sep = " · " if width < 76 else " │ "
             frags: list = []
-            for seg in segs or [[(_SB, " ☤ "), (_STRONG, snapshot["model_short"])]]:
+            for seg in segs or [[(_SB, f" {get_active_brand_icon()} "), (_STRONG, snapshot["model_short"])]]:
                 if frags:
                     frags.append((_DIM, sep))
                 frags.extend(seg)
@@ -1170,6 +1178,33 @@ class CLIStatusBarMixin:
             if battery_label and _ok("battery"):
                 battery_style = self._battery_status_style(snapshot.get("battery_category", "dim"))
                 frags[0:0] = [(_SB, " "), (battery_style, battery_label), (_DIM, " │")]
+
+            # ── Plugin status_bar_fragment hook ────────────────────────
+            # Plugins (e.g. tps_monitor) can inject extra fragments here.
+            # invoke_hook returns a list of callback results; each callback
+            # returns a list of (style, text) tuples, so we flatten one level.
+            # Must run BEFORE _right_align_status_title_fragments: that call
+            # pads frags out to exactly `width` columns whenever a session
+            # title is set, so anything appended after it always overflows
+            # and gets silently sheared off by the trim branch below.
+            try:
+                from hermes_cli.plugins import invoke_hook
+                plugin_frags = invoke_hook(
+                    "status_bar_fragment",
+                    cli=self,
+                    agent=getattr(self, "agent", None),
+                )
+                for cb_result in plugin_frags or []:
+                    if not cb_result:
+                        continue
+                    for pf in cb_result:
+                        if isinstance(pf, (list, tuple)) and len(pf) == 2:
+                            frag_text = pf[1] if isinstance(pf[1], str) else str(pf[1])
+                            if self._status_bar_display_width(frag_text) > 0:
+                                frags.append((_DIM, " │ "))
+                                frags.append(pf)
+            except Exception:
+                pass
 
             frags = self._right_align_status_title_fragments(frags, session_title, width)
             vim_label = self._vim_mode_label()

@@ -547,7 +547,10 @@ def _identity_parts(agent: Any, ctx_len: Optional[int]) -> Tuple[List[str], bool
     Returns ``(parts, soul_loaded)``."""
     wants_soul = agent.load_soul_identity or not agent.skip_context_files
     _soul_content = _pb.load_soul_md(ctx_len, home_override=_agent_home(agent)) if wants_soul else None
-    return ([_soul_content], True) if _soul_content else ([DEFAULT_AGENT_IDENTITY], False)
+    parts = [_soul_content] if _soul_content else [DEFAULT_AGENT_IDENTITY]
+    # Hard-coded critical boundary — must never be bypassed or missed.
+    parts.insert(0, _pb.CRITICAL_BOUNDARY_GUIDANCE)
+    return (parts, bool(_soul_content))
 
 
 def _guidance_parts(agent: Any) -> List[str]:

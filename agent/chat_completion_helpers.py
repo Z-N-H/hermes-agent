@@ -2995,7 +2995,11 @@ class _StreamingCall(StreamingWaitMonitor):
         the delta callback for tag extraction (the CLI drops non-reasoning text
         once the stream box is closed)."""
         if self.agent.stream_delta_callback:
-            self._quiet(lambda: (self.agent.stream_delta_callback(text), self.agent._record_streamed_assistant_text(text)))
+            self._quiet(lambda: (
+                self.agent.stream_delta_callback(text),
+                self.agent._record_streamed_assistant_text(text),
+                self.agent._record_tps_token(text),
+            ))
 
     def _new_diag(self) -> dict:
         diag = self.agent._stream_diag_init()
@@ -3298,6 +3302,9 @@ class _StreamingCall(StreamingWaitMonitor):
             if delta_tool_calls:
                 _flush_pending_stream_text()
                 for tc_delta in delta_tool_calls:
+                    _args_delta = getattr(getattr(tc_delta, "function", None), "arguments", None)
+                    if _args_delta:
+                        self.agent._record_tps_token(_args_delta)
                     name = tool_calls.feed(tc_delta)
                     if name is not None:
                         self._emit_tool_started(name)

@@ -19,6 +19,11 @@ from utils import safe_json_loads
 from agent.i18n import t
 from agent.redact import redact_sensitive_text
 from agent.tool_result_classification import file_mutation_result_landed, is_guardrail_refusal
+from hermes_icons import ICON_BOLT, ICON_GEAR, NerdFontIcons
+
+# ANSI escape codes for coloring tool failure indicators
+_RED = "\033[31m"
+_RESET = "\033[0m"
 
 logger = logging.getLogger(__name__)
 
@@ -139,17 +144,30 @@ def get_skin_tool_prefix() -> str:
     return skin.tool_prefix if skin else "┊"
 
 
-def get_tool_emoji(tool_name: str, default: str = "⚡") -> str:
-    """Display emoji for a tool: skin ``tool_emojis`` override, then registry, then *default*."""
+def get_tool_emoji(tool_name: str, default: str = ICON_BOLT) -> str:
+    """Get the display emoji for a tool.
+
+    Resolution order:
+    1. Active skin's ``tool_emojis`` overrides (if a skin is loaded)
+    2. Tool registry's per-tool ``emoji`` field
+    3. *default* fallback
+    """
+    # 1. Skin override
     skin = _get_skin()
-    override = skin.tool_emojis.get(tool_name) if skin and skin.tool_emojis else None
-    if override:
-        return override
+    if skin and skin.tool_emojis:
+        override = skin.tool_emojis.get(tool_name)
+        if override:
+            return NerdFontIcons.get_by_emoji(override, default=default)
+    # 2. Registry default
     try:
         from tools.registry import registry
-        return registry.get_emoji(tool_name, default="") or default
+        emoji = registry.get_emoji(tool_name, default="")
+        if emoji:
+            return NerdFontIcons.get_by_emoji(emoji, default=default)
     except Exception:
-        return default
+        pass
+    # 3. Hardcoded fallback
+    return NerdFontIcons.get_by_emoji(default, default=default)
 
 
 # ── Tool preview (one-line summary of a tool call's primary argument) ─────
@@ -1057,9 +1075,9 @@ def _cute_web_extract(a: dict, _r) -> str:
     urls = a.get("urls", [])
     url = _display_url(urls[0] if isinstance(urls, list) else urls) if urls else ""
     if not url:
-        return _cute_row("📄", "fetch", t("display.cute.fetch_pages"))
+        return _cute_row(NerdFontIcons.get("fa-file"), "fetch", t("display.cute.fetch_pages"))
     extra = f" +{len(urls)-1}" if isinstance(urls, list) and len(urls) > 1 else ""
-    return _cute_row("📄", "fetch", f"{_cute_trunc(_domain(url))}{extra}")
+    return _cute_row(NerdFontIcons.get("fa-file"), "fetch", f"{_cute_trunc(_domain(url))}{extra}")
 
 
 def _cute_todo_list(a: dict, result) -> str:
@@ -1078,23 +1096,23 @@ def _cute_todo_list(a: dict, result) -> str:
                   else t("display.cute.todo_update_count", count=len(todos_arg)))
     else:
         detail = progress if total > 0 and done > 0 else t("display.cute.todo_count", count=len(todos_arg))
-    return _cute_row("📋", "plan", detail)
+    return _cute_row(NerdFontIcons.get("fa-clipboard_list"), "plan", detail)
 
 
 def _cute_memory(a: dict, _r) -> str:
     action, target = a.get("action", "?"), a.get("target", "")
     if action == "add":
-        return _cute_row("🧠", "memory", f"+{target}: \"{_cute_trunc(a.get('content', ''))}\"")
+        return _cute_row(NerdFontIcons.get("md-brain"), "memory", f"+{target}: \"{_cute_trunc(a.get('content', ''))}\"")
     if action in ("replace", "remove"):
         old = a.get("old_text") or t("display.preview.missing_old_text")
-        return _cute_row("🧠", "memory", f"{'~' if action == 'replace' else '-'}{target}: \"{_cute_trunc(old)}\"")
-    return _cute_row("🧠", "memory", str(action))
+        return _cute_row(NerdFontIcons.get("md-brain"), "memory", f"{'~' if action == 'replace' else '-'}{target}: \"{_cute_trunc(old)}\"")
+    return _cute_row(NerdFontIcons.get("md-brain"), "memory", str(action))
 
 
 def _cute_skill_view(a: dict, _r) -> str:
     label, file_path = a.get("name", ""), a.get("file_path")
     label = (f"{label} → {file_path}" if label else str(file_path)) if file_path else label
-    return _cute_row("📚", "skill", _cute_trunc(label))
+    return _cute_row(NerdFontIcons.get("fa-book"), "skill", _cute_trunc(label))
 
 
 def _cute_cronjob(a: dict, _r) -> str:
@@ -1102,77 +1120,77 @@ def _cute_cronjob(a: dict, _r) -> str:
     if action == "create":
         skills = a.get("skills") or ([a.get("skill")] if a.get("skill") else [])
         label = a.get("name") or (skills[0] if skills else None) or a.get("prompt", t("display.cute.cron_task_fallback"))
-        return _cute_row("⏰", "cron", t("display.cute.cron_create", label=_cute_trunc(label)))
+        return _cute_row(NerdFontIcons.get("fa-clock"), "cron", t("display.cute.cron_create", label=_cute_trunc(label)))
     if action == "list":
-        return _cute_row("⏰", "cron", t("display.cute.cron_listing"))
-    return _cute_row("⏰", "cron", f"{action} {a.get('job_id', '')}")
+        return _cute_row(NerdFontIcons.get("fa-clock"), "cron", t("display.cute.cron_listing"))
+    return _cute_row(NerdFontIcons.get("fa-clock"), "cron", f"{action} {a.get('job_id', '')}")
 
 
 def _cute_execute_code(a: dict, _r) -> str:
     code = a.get("code", "").strip()
-    return _cute_row("🐍", "exec", _cute_trunc(code.split(chr(10))[0] if code else ""))
+    return _cute_row(NerdFontIcons.get("fa-python"), "exec", _cute_trunc(code.split(chr(10))[0] if code else ""))
 
 
 def _cute_browser_exec(a: dict, _r) -> str:
     # Leading `# …` comment becomes the step label; code stays collapsed behind the preview cap.
     label = _browser_exec_step_label(a)
-    return _cute_row("🌐", "browser", _cute_trunc(_oneline(str(a.get("code", "") or ""))) if label is None else label)
+    return _cute_row(NerdFontIcons.get("fa-globe"), "browser", _cute_trunc(_oneline(str(a.get("code", "") or ""))) if label is None else label)
 
 
 def _cute_delegate(a: dict, _r) -> str:
     action_preview = _delegate_action_preview(a)
     tasks = a.get("tasks")
     if action_preview is not None:
-        return _cute_row("🔀", "delegate", _cute_trunc(action_preview))
+        return _cute_row(NerdFontIcons.get("fa-shuffle"), "delegate", _cute_trunc(action_preview))
     if tasks and isinstance(tasks, list):
         goals = _delegate_task_goals(tasks, per_goal_len=30)
         joined = _cute_trunc(" | ".join(goals) if goals else t("display.cute.delegate_parallel"))
-        return _cute_row("🔀", "delegate", f"{len(goals) or len(tasks)}x: {joined}")
-    return _cute_row("🔀", "delegate", _cute_trunc(a.get("goal", "")))
+        return _cute_row(NerdFontIcons.get("fa-shuffle"), "delegate", f"{len(goals) or len(tasks)}x: {joined}")
+    return _cute_row(NerdFontIcons.get("fa-shuffle"), "delegate", _cute_trunc(a.get("goal", "")))
 
 
 def _cute_process_manage(a: dict, _r) -> str:
     action, sid = a.get("action", "?"), a.get("session_id", "")[:12]
-    return _cute_row("⚙️ ", "proc", t("display.cute.process_list") if action == "list" else f"{action} {sid}")
+    return _cute_row(ICON_GEAR, "proc", t("display.cute.process_list") if action == "list" else f"{action} {sid}")
 
 
-_SCROLL_ARROWS = {"down": "↓", "up": "↑", "right": "→", "left": "←"}
+_SCROLL_ARROWS = {d: NerdFontIcons.get(f"fa-arrow_{d}") for d in ("down", "up", "right", "left")}
 
 
 def _cute_scroll(a: dict, _r) -> str:
     direction = a.get("direction", "down")
     label = t(f"display.cute.scroll.{direction}") if direction in _SCROLL_ARROWS else str(direction)
-    return _cute_row(f"{_SCROLL_ARROWS.get(direction, '↓')} ", "scroll", label)
+    return _cute_row(_SCROLL_ARROWS.get(direction, _SCROLL_ARROWS["down"]), "scroll", label)
 
 
 # Completion-line renderers: tool -> f(args, result) -> "┊ {emoji} {verb:9} {detail}" (duration appended by caller).
 _CUTE_LINES = {
-    "web_search": lambda a, r: _cute_row("🔍", "search", _cute_trunc(a.get("query", ""))),
+    "web_search": lambda a, r: _cute_row(NerdFontIcons.get("fa-magnifying_glass"), "search", _cute_trunc(a.get("query", ""))),
     "web_extract": _cute_web_extract,
-    "terminal": lambda a, r: _cute_row("💻", "terminal", _cute_trunc(build_tool_preview("terminal", a) or a.get("command", ""))),
+    "terminal": lambda a, r: _cute_row(NerdFontIcons.get("fa-laptop"), "terminal", _cute_trunc(build_tool_preview("terminal", a) or a.get("command", ""))),
     "process_manage": _cute_process_manage,
-    "read_file": lambda a, r: _cute_row("📖", "read", _cute_trunc(build_tool_preview("read_file", a) or a.get("path", ""))),
-    "write_file": lambda a, r: _cute_row("✍️ ", "write", _cute_path(a.get("path", ""))),
-    "patch": lambda a, r: _cute_row("🔧", "patch", _cute_path(a.get("path", ""))),
-    "search_files": lambda a, r: _cute_row("🔎", "find" if a.get("target", "content") == "files" else "grep", _cute_trunc(a.get("pattern", ""))),
-    "browser_navigate": lambda a, r: _cute_row("🌐", "navigate", _cute_trunc(_domain(a.get("url", "")))),
-    "browser_snapshot": lambda a, r: _cute_row("📸", "snapshot", t("display.cute.snapshot_full" if a.get("full") else "display.cute.snapshot_compact")),
-    "browser_click": lambda a, r: _cute_row("👆", "click", str(a.get("ref", "?"))),
-    "browser_type": lambda a, r: _cute_row("⌨️ ", "type", f"\"{_cute_trunc(a.get('text', ''))}\""),
+    "read_file": lambda a, r: _cute_row(NerdFontIcons.get("fa-book_open"), "read", _cute_trunc(build_tool_preview("read_file", a) or a.get("path", ""))),
+    "write_file": lambda a, r: _cute_row(NerdFontIcons.get("fa-pen"), "write", _cute_path(a.get("path", ""))),
+    "patch": lambda a, r: _cute_row(NerdFontIcons.get("fa-screwdriver_wrench"), "patch", _cute_path(a.get("path", ""))),
+    "search_files": lambda a, r: _cute_row(NerdFontIcons.get("fa-magnifying_glass"), "find" if a.get("target", "content") == "files" else "grep", _cute_trunc(a.get("pattern", ""))),
+    "browser_navigate": lambda a, r: _cute_row(NerdFontIcons.get("fa-globe"), "navigate", _cute_trunc(_domain(a.get("url", "")))),
+    "browser_snapshot": lambda a, r: _cute_row(NerdFontIcons.get("fa-camera"), "snapshot", t("display.cute.snapshot_full" if a.get("full") else "display.cute.snapshot_compact")),
+    "browser_click": lambda a, r: _cute_row(NerdFontIcons.get("fa-hand_pointer"), "click", str(a.get("ref", "?"))),
+    "browser_type": lambda a, r: _cute_row(NerdFontIcons.get("fa-keyboard"), "type", f"\"{_cute_trunc(a.get('text', ''))}\""),
     "browser_scroll": _cute_scroll,
-    "browser_back": lambda a, r: _cute_row("◀️ ", "back"),
-    "browser_press": lambda a, r: _cute_row("⌨️ ", "press", str(a.get("key", "?"))),
-    "browser_get_images": lambda a, r: _cute_row("🖼️ ", "images", t("display.cute.images_extracting")),
-    "browser_vision": lambda a, r: _cute_row("👁️ ", "vision", t("display.cute.vision_analyzing_page")),
+    "browser_back": lambda a, r: _cute_row(NerdFontIcons.get("fa-arrow_left"), "back"),
+    "browser_press": lambda a, r: _cute_row(NerdFontIcons.get("fa-keyboard"), "press", str(a.get("key", "?"))),
+    "browser_get_images": lambda a, r: _cute_row(NerdFontIcons.get("fa-image"), "images", t("display.cute.images_extracting")),
+    "browser_vision": lambda a, r: _cute_row(NerdFontIcons.get("fa-eye"), "vision", t("display.cute.vision_analyzing_page")),
     "todo_list": _cute_todo_list,
-    "session_search": lambda a, r: _cute_row("🔍", "recall", f"\"{_cute_trunc(a.get('query', ''))}\""),
+    "session_search": lambda a, r: _cute_row(NerdFontIcons.get("fa-magnifying_glass"), "recall", f"\"{_cute_trunc(a.get('query', ''))}\""),
     "memory": _cute_memory,
-    "skills_list": lambda a, r: _cute_row("📚", "skills", t("display.cute.skills_list", category=a.get("category") or t("display.cute.skills_all"))),
+    "skills_list": lambda a, r: _cute_row(NerdFontIcons.get("fa-book"), "skills", t("display.cute.skills_list", category=a.get("category") or t("display.cute.skills_all"))),
     "skill_view": _cute_skill_view,
-    "image_generate": lambda a, r: _cute_row("🎨", "create", _cute_trunc(a.get("prompt", ""))),
-    "text_to_speech": lambda a, r: _cute_row("🔊", "speak", _cute_trunc(a.get("text", ""))),
-    "vision_analyze": lambda a, r: _cute_row("👁️ ", "vision", _cute_trunc(a.get("question", ""))),
-    "send_message": lambda a, r: _cute_row("📨", "send", f"{a.get('target', '?')}: \"{_cute_trunc(a.get('message', ''))}\""),
+    "image_generate": lambda a, r: _cute_row(NerdFontIcons.get("fa-palette"), "create", _cute_trunc(a.get("prompt", ""))),
+    "text_to_speech": lambda a, r: _cute_row(NerdFontIcons.get("fa-volume_high"), "speak", _cute_trunc(a.get("text", ""))),
+    "vision_analyze": lambda a, r: _cute_row(NerdFontIcons.get("fa-eye"), "vision", _cute_trunc(a.get("question", ""))),
+    "send_message": lambda a, r: _cute_row(NerdFontIcons.get("fa-envelope"), "send", f"{a.get('target', '?')}: \"{_cute_trunc(a.get('message', ''))}\""),
     "cronjob_manage": _cute_cronjob,
     "execute_code": _cute_execute_code,
     "browser_exec": _cute_browser_exec,
@@ -1226,7 +1244,7 @@ def _get_cute_tool_message(tool_name: str, args: dict, duration: float, result: 
     render = _CUTE_LINES.get(tool_name)
     rows = _cute_bridge_rows(tool_name, args)
     if rows is None:
-        body = render(args, result) if render else f"┊ ⚡ {tool_name[:9]:9} {_cute_trunc(build_tool_preview(tool_name, args) or '')}"
+        body = render(args, result) if render else f"┊ {ICON_BOLT} {tool_name[:9]:9} {_cute_trunc(build_tool_preview(tool_name, args) or '')}"
         rows, suffixes = [body], [failure_suffix if is_failure else ""]
     else:
         suffixes = _bridge_row_suffixes(len(rows), result, failure_suffix if is_failure else "")

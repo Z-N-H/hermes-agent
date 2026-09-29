@@ -390,13 +390,14 @@ def _print_side_result_panel(cli, *, header_lines, body, title_suffix, empty_not
     if not body:
         return _cp(empty_note) if console is None else console.print(empty_note)
     try:
-        from hermes_cli.skin_engine import get_active_skin
+        from hermes_cli.skin_engine import get_active_skin, get_active_brand_icon
         _skin = get_active_skin()
-        label = _skin.get_branding("response_label", "☤ Hermes")
+        label = _skin.get_branding("response_label", f"{get_active_brand_icon()} Hermes")
         _resp_color = _maybe_remap_for_light_mode(_skin.get_color("response_border", "#CD7F32"))
         _resp_text = _maybe_remap_for_light_mode(_skin.get_color("banner_text", "#FFF8DC"))
     except Exception:
-        label, _resp_color, _resp_text = "☤ Hermes", "#CD7F32", "#FFF8DC"
+        from hermes_cli.skin_engine import get_active_brand_icon
+        label, _resp_color, _resp_text = f"{get_active_brand_icon()} Hermes", "#CD7F32", "#FFF8DC"
     rich_console.print(Panel(
         _render_final_assistant_content(body, mode=cli.final_response_markdown),
         title=f"[{_resp_color} bold]{label} {title_suffix}[/]", title_align="left",
@@ -2667,6 +2668,12 @@ class CLICommandsMixin:
         confirmed (the caller exits the app; the relaunch runs on the main thread after
         prompt_toolkit restores terminal modes), False when cancelled."""
         from hermes_cli.config import is_managed, format_managed_message
+        try:
+            from hermes_cli.skin_engine import get_active_brand_icon
+            _icon = get_active_brand_icon()
+        except Exception:
+            _icon = "⚕"
+
         if is_managed():
             print(f"  ✗ {format_managed_message(_t('update.managed_action'))}")
             return False
@@ -2674,11 +2681,11 @@ class CLICommandsMixin:
         choices = [("once", _t("update.choice_update"), _t("update.choice_update_desc")),
                    ("cancel", _t("update.choice_cancel"), _t("update.choice_cancel_desc"))]
         raw = self._prompt_text_input_modal(
-            title=_t("update.title"), detail=_t("update.detail"), choices=choices)
+            title=_t("update.title").replace("☤", _icon, 1), detail=_t("update.detail"), choices=choices)
         if raw is None or self._normalize_slash_confirm_choice(raw, choices) != "once":
             print(f"  {_t('update.cancelled')}")
             return False
-        _say_block(f"  {_t('update.launching')}")
+        _say_block(f"  {_t('update.launching').replace('☤', _icon, 1)}")
         # run() execs this on the main thread after prompt_toolkit restores terminal modes;
         # relaunching from this daemon thread would skip cleanup (POSIX) / only end the thread (Windows).
         self._pending_relaunch = ["update"]

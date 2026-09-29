@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
 from hermes_constants import hermes_home_key, normalize_scope
+from hermes_icons import ICON_BOLT
 
 logger = logging.getLogger(__name__)
 
@@ -945,7 +946,7 @@ class ToolRegistry:
     def get_toolset_for_tool(self, name: str) -> Optional[str]:
         return self._attr(name, "toolset")
 
-    def get_emoji(self, name: str, default: str = "⚡") -> str:
+    def get_emoji(self, name: str, default: str = ICON_BOLT) -> str:
         """Return the emoji for a tool, or *default* if unset."""
         return self._attr(name, "emoji") or default
 

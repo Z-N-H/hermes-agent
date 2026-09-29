@@ -1253,6 +1253,35 @@ class AIAgent(
     _interruptible_streaming_api_call = _forward("agent.chat_completion_helpers", "interruptible_streaming_api_call")
     _try_activate_fallback = _forward("agent.chat_completion_helpers", "try_activate_fallback")
 
+    def _record_tps_token(self, text: str) -> None:
+        """Track tokens-per-second using a rolling window."""
+        if not text:
+            return
+        now = time.time()
+        # Approximate token count: ~4 chars per token (works well for English/CJK mix)
+        token_estimate = max(1, len(text) // 4)
+        self._tps_token_count += token_estimate
+        elapsed = now - self._tps_window_start
+        # Update TPS immediately so the status bar shows something even for
+        # fast responses.  The 1-second gate below is just for resetting the
+        # window to keep the rolling average fresh.
+        if elapsed > 0:
+            self._current_tps = self._tps_token_count / elapsed
+            self._last_tps_update = now
+        if elapsed >= 1.0:
+            self._tps_token_count = 0
+            self._tps_window_start = now
+
+    def _fire_stream_delta(self, text: str) -> None:
+        """Track TPS for the status bar, then delegate to the stream-delivery mixin."""
+        self._record_tps_token(text)
+        super()._fire_stream_delta(text)
+
+    def _fire_reasoning_delta(self, text: str, *, inline: bool = False) -> None:
+        """Track TPS for the status bar, then delegate to the stream-delivery mixin."""
+        self._record_tps_token(text)
+        super()._fire_reasoning_delta(text, inline=inline)
+
     def _has_pending_fallback(self) -> bool:
         """Whether a fallback provider remains (mirrors ``try_activate_fallback``'s guard) — gates the
         "trying fallback..." status so we never announce one that won't be attempted.

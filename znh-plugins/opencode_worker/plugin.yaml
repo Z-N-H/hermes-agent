@@ -1,0 +1,6 @@
+name: opencode_worker
+version: 1.1.0
+description: "Delegate all coding tasks to OpenCode CLI via the opencode_delegate tool."
+author: "znh"
+provides_tools:
+  - opencode_delegate

@@ -910,8 +910,13 @@ def gateway_setup():
         return
 
     print()
+    try:
+        from hermes_cli.skin_engine import get_active_brand_icon
+        _icon = get_active_brand_icon()
+    except Exception:
+        _icon = "⚕"
     for banner_line in _WIZARD_BANNER:
-        print(_gw().color(banner_line, _gw().Colors.MAGENTA))
+        print(_gw().color(banner_line.replace("☤", _icon, 1), _gw().Colors.MAGENTA))
 
     _wizard_service_status_block()
     _wizard_platform_loop()

@@ -88,6 +88,14 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
             "reported and continue where the last run left off (scouts, "
             "monitors, incremental digests). First run is unchanged.")
 
+    cron_create.add_argument("--required-mcp-tool", dest="required_mcp_tools", action="append",
+        help="MCP tool name/pattern (glob, e.g. 'granola_*') the job needs to run. If any is "
+            "unavailable at fire time, the run fails BEFORE the LLM turn (zero inference spend) "
+            "and alerts. Repeatable. Omit to inherit from attached skills' frontmatter.")
+    cron_create.add_argument("--required-mcp-server", dest="required_mcp_servers", action="append",
+        help="MCP server name (mcp_servers config key) that must be connected at fire time, with "
+            "the same fail-before-inference semantics. Repeatable.")
+
     _flag(cron_create, "--paused", default=False,
         help="Create disabled in one write; resume to schedule, or explicitly run now.")
     cron_create.add_argument("--paused-reason", help="Auditable reason; requires --paused.")
@@ -151,6 +159,12 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
     cron_edit.add_argument("--interpreter",
         help="Absolute or ~ path to a Python for a .py script / monitor script. "
             "Pass empty string to clear (back to Hermes' Python).")
+    cron_edit.add_argument("--required-mcp-tool", dest="required_mcp_tools", action="append",
+        help="Replace the job's required MCP tool patterns (fail-before-inference guard). Repeatable.")
+    cron_edit.add_argument("--required-mcp-server", dest="required_mcp_servers", action="append",
+        help="Replace the job's required MCP servers. Repeatable.")
+    cron_edit.add_argument("--clear-required-mcp", action="store_true",
+        help="Remove all required MCP tool/server declarations from the job")
 
     # lifecycle actions
     cron_pause = cron_subparsers.add_parser("pause", help="Pause a scheduled job")

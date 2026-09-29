@@ -446,6 +446,71 @@ def _apply_skill_fields(job: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
+def _normalize_required_mcp_list(value: Optional[Any]) -> Optional[List[str]]:
+    """Normalize a required_mcp_tools / required_mcp_servers input.
+
+    Accepts a single string or a list, strips whitespace, drops empties, and
+    dedupes (order preserved). Returns None when nothing usable remains, so
+    the field is simply absent on the stored job (back-compat: pre-existing
+    and requirement-free jobs stay byte-identical).
+    """
+    if value is None:
+        return None
+    raw_items = [value] if isinstance(value, str) else list(value)
+    normalized: List[str] = []
+    for item in raw_items:
+        text = str(item or "").strip()
+        if text and text not in normalized:
+            normalized.append(text)
+    return normalized or None
+
+
+def _required_mcp_from_skill_frontmatter(skills: List[str]) -> Dict[str, List[str]]:
+    """Collect required MCP tools/servers declared by the attached skills.
+
+    Skills can declare ``required_mcp_tools`` / ``required_mcp_servers`` in
+    their SKILL.md frontmatter; a cron job that loads such a skill inherits
+    the declaration so the scheduler can hard-fail the run (before any LLM
+    call, zero inference spend) when those capabilities are unavailable,
+    instead of letting the model wander and report a hollow success.
+
+    Best-effort: any skill that cannot be loaded or parsed is skipped — job
+    creation must never break because a skill is mid-edit.
+    """
+    if not skills:
+        return {}
+    tools: List[str] = []
+    servers: List[str] = []
+    for skill_name in skills:
+        try:
+            from tools.skills_tool import skill_view
+            from agent.skill_utils import normalize_skill_lookup_name, parse_frontmatter
+
+            loaded = json.loads(skill_view(normalize_skill_lookup_name(skill_name)))
+            if not isinstance(loaded, dict) or not loaded.get("success"):
+                continue
+            frontmatter, _body = parse_frontmatter(str(loaded.get("content") or ""))
+            if not isinstance(frontmatter, dict):
+                continue
+            for entry in _normalize_required_mcp_list(frontmatter.get("required_mcp_tools")) or []:
+                if entry not in tools:
+                    tools.append(entry)
+            for entry in _normalize_required_mcp_list(frontmatter.get("required_mcp_servers")) or []:
+                if entry not in servers:
+                    servers.append(entry)
+        except Exception:
+            logger.debug(
+                "create_job: failed to read required MCP fields from skill '%s' frontmatter",
+                skill_name, exc_info=True,
+            )
+    result: Dict[str, List[str]] = {}
+    if tools:
+        result["required_mcp_tools"] = tools
+    if servers:
+        result["required_mcp_servers"] = servers
+    return result
+
+
 def _coerce_job_text(value: Any, fallback: str = "") -> str:
     """Coerce legacy/hand-edited nullable cron fields to strings for readers."""
     return fallback if value is None else str(value)
@@ -1752,6 +1817,11 @@ _UPDATE_FIELD_NORMALIZERS: Dict[str, Callable[[Any], Any]] = {
     "monitor_url": _normalize_job_optional_text,
     "interpreter": _normalize_job_optional_text,
     "reasoning_effort": _normalize_reasoning_effort,
+    # Required-MCP declarations: a list (possibly empty) or None clears the
+    # declaration. Normalized to None on empty so the stored value means
+    # "no requirement declared — legacy non-fatal MCP behavior" (#4219).
+    "required_mcp_tools": _normalize_required_mcp_list,
+    "required_mcp_servers": _normalize_required_mcp_list,
 }
 
 
@@ -1818,6 +1888,8 @@ def create_job(
     monitor_script: Optional[str] = None,
     monitor_url: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
+    required_mcp_tools: Optional[List[str]] = None,
+    required_mcp_servers: Optional[List[str]] = None,
     failure_deliver: Optional[str] = None,
     paused: bool = False,
     paused_reason: Optional[str] = None,
@@ -1833,7 +1905,12 @@ def create_job(
     source run FIRST each tick; unchanged output suppresses the agent run (mutually exclusive,
     incompatible with ``no_agent``). reasoning_effort: per-job pin; capability NOT validated.
     interpreter: absolute/``~`` Python for ``.py`` script/monitor_script, validated at run time
-    (a venv can be rebuilt or moved after creation)."""
+    (a venv can be rebuilt or moved after creation).
+    required_mcp_tools/required_mcp_servers: MCP tool patterns (globs allowed) / server names
+    the job cannot do its work without — the scheduler hard-fails BEFORE the agent turn (zero
+    inference spend, standard failure alerting) when unmatched. Inherited from the attached
+    skills' frontmatter when omitted; jobs declaring nothing keep the legacy non-fatal MCP
+    behavior (#4219)."""
     if not isinstance(paused, bool):
         raise ValueError("paused must be a boolean.")
     if paused_reason is not None and not isinstance(paused_reason, str):
@@ -1857,6 +1934,18 @@ def create_job(
     normalized_skills = _normalize_skill_list(skill, skills)
     normalized_attach = attach_to_session if isinstance(attach_to_session, bool) else None
     normalized_reasoning_effort = _normalize_reasoning_effort(reasoning_effort)
+    # Required-MCP declarations. Explicit values win; otherwise inherit from
+    # the attached skills' frontmatter so a job built around a skill that
+    # declares MCP dependencies gets the hard-fail guard for free.
+    normalized_required_tools = _normalize_required_mcp_list(required_mcp_tools)
+    normalized_required_servers = _normalize_required_mcp_list(required_mcp_servers)
+    if normalized_required_tools is None or normalized_required_servers is None:
+        _inherited = _required_mcp_from_skill_frontmatter(normalized_skills)
+        if normalized_required_tools is None:
+            normalized_required_tools = _inherited.get("required_mcp_tools")
+        if normalized_required_servers is None:
+            normalized_required_servers = _inherited.get("required_mcp_servers")
+
 
     _validate_job_mode_invariants(f["monitor_script"], f["monitor_url"], f["no_agent"], f["script"])
     prompt_text = _coerce_job_text(prompt).strip()
@@ -1915,10 +2004,13 @@ def create_job(
     }
     # Optional keys are persisted only when explicitly set: an absent key falls back to global
     # config (attach/reasoning) or to ``deliver`` (failure_deliver), byte-identical to pre-feature
-    # jobs.
+    # jobs. Same rationale for required-MCP declarations: absent keys mean "no requirement
+    # declared — legacy non-fatal MCP behavior" (#4219).
     for key, value in (
         ("attach_to_session", normalized_attach), ("reasoning_effort", normalized_reasoning_effort),
         ("failure_deliver", f["failure_deliver"]), ("interpreter", f["interpreter"]),
+        ("required_mcp_tools", normalized_required_tools),
+        ("required_mcp_servers", normalized_required_servers),
     ):
         if value is not None:
             job[key] = value

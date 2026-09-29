@@ -32,6 +32,30 @@ from tools.environments.local_pythonpath import (
 
 _IS_WINDOWS = platform.system() == "Windows"
 
+
+def _real_writable_dir(path: str) -> bool:
+    """Real open(O_CREAT) probe — access(2) is not authoritative.
+
+    Under policy sandboxes (Landlock/nono) access(2) answers from raw DAC
+    bits while open(2) is what the policy restricts, so "writable via
+    access" can still deny every real write (2026-08-24 session-storage
+    incident). Only a real create agrees with the writes this temp dir is
+    chosen for.
+    """
+    probe = os.path.join(path, f".hermes-tmp-probe-{os.getpid()}")
+    try:
+        fd = os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
+        os.unlink(probe)
+        return True
+    except OSError:
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass
+        return False
+
+
 logger = logging.getLogger(__name__)
 
 # --- Terminal temp-cache pruning ---
@@ -898,7 +922,7 @@ class LocalEnvironment(BaseEnvironment):
             cache_dir = _default_terminal_temp_dir()
             cache_dir.mkdir(parents=True, exist_ok=True)
             resolved = str(cache_dir)
-            if resolved.startswith("/") and os.access(resolved, os.W_OK | os.X_OK):
+            if resolved.startswith("/") and _real_writable_dir(resolved):
                 _prune_terminal_temp_once()
                 return _posix(resolved)
         except Exception:

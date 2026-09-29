@@ -16,10 +16,12 @@ import importlib.util
 import inspect
 import logging
 import os
+import re
 import sys
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Set
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -246,8 +248,270 @@ _STDIO_RESPAWN_WAIT_SEC = 15.0
 _DEFAULT_KEEPALIVE_INTERVAL, _MIN_KEEPALIVE_INTERVAL = 180, 5
 # One bounded cancellation cycle at final shutdown so resistant tasks cannot hang exit.
 _MCP_LOOP_DRAIN_TIMEOUT = 3.0
-# JSON-RPC 2.0 "method not found" (server without optional ``ping``); _ensure_mcp_sdk()
-# overrides it from mcp.types once loaded.
+
+# Environment variables that are safe to pass to stdio subprocesses
+_SAFE_ENV_KEYS = frozenset({
+    "PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR",
+})
+
+# Proxy-control env vars belonging to an egress-firewall sandbox that Hermes
+# itself is running inside.  When the sandbox is the only route off the box
+# (nono and the Docker/iron-proxy profile both kill direct DNS), stdio MCP
+# subprocesses MUST inherit this plumbing or every outbound connection they
+# make dies with "Name or service not known" — httpx/requests/node already
+# honour these names, so nothing else needs patching.
+#
+# Both casings are listed deliberately: httpx and requests read whichever is
+# present, and sandboxes commonly set only one of the pair.
+#
+# These are *control* vars only — where to send bytes and which CA to trust.
+# Provider credentials (OPENAI_API_KEY, GITHUB_TOKEN, …) are never in this
+# set and stay filtered; an MCP server that needs one still declares it in
+# its ``env:`` config block.  NODE_OPTIONS is deliberately excluded even
+# though it can carry TLS flags: it also accepts ``--require``, which turns
+# an env passthrough into arbitrary code execution in the child.
+_SANDBOX_PROXY_ENV_KEYS = frozenset({
+    "HTTPS_PROXY", "https_proxy",
+    "HTTP_PROXY", "http_proxy",
+    "NO_PROXY", "no_proxy",
+    "ALL_PROXY", "all_proxy",
+    # CA trust for the sandbox proxy's MITM certificate.
+    "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+    # Node >= 24 ignores *_PROXY unless this opt-in is set; nono sets it.
+    "NODE_USE_ENV_PROXY",
+    # Sandbox sentinels — pass through so nested children keep detecting.
+    "HERMES_EGRESS_PROXY",
+})
+
+# Hosts that only ever name the local machine.  A proxy pointed at one of
+# these was minted by a sandbox on this box, not by a corporate network.
+_LOOPBACK_PROXY_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+_SAFE_ENV_KEYS_CASE_INSENSITIVE = frozenset({
+    # Windows process/location vars. These are needed by launcher-style tools
+    # such as Docker Desktop's MCP plugin discovery, and do not carry secrets.
+    "ALLUSERSPROFILE",
+    "APPDATA",
+    "COMMONPROGRAMFILES",
+    "COMMONPROGRAMFILES(X86)",
+    "COMMONPROGRAMW6432",
+    "COMPUTERNAME",
+    "COMSPEC",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "NUMBER_OF_PROCESSORS",
+    "OS",
+    "PATHEXT",
+    "PROCESSOR_ARCHITECTURE",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "PUBLIC",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERDOMAIN",
+    "USERNAME",
+    "USERPROFILE",
+    "WINDIR",
+})
+
+# Regex for credential patterns to strip from error messages
+_CREDENTIAL_PATTERN = re.compile(
+    r"(?:"
+    r"ghp_[A-Za-z0-9_]{1,255}"           # GitHub PAT
+    r"|sk-[A-Za-z0-9_]{1,255}"           # OpenAI-style key
+    r"|Bearer\s+\S+"                      # Bearer token
+    r"|token=[^\s&,;\"']{1,255}"         # token=...
+    r"|key=[^\s&,;\"']{1,255}"           # key=...
+    r"|API_KEY=[^\s&,;\"']{1,255}"       # API_KEY=...
+    r"|password=[^\s&,;\"']{1,255}"      # password=...
+    r"|secret=[^\s&,;\"']{1,255}"        # secret=...
+    r")",
+    re.IGNORECASE,
+)
+
+# Pre-compiled pattern for ${VAR_NAME} style env-var interpolation.
+# Supports any non-} characters in the variable name (hyphens, dots, etc.)
+# so providers like MY-VAR or my.var work correctly.
+_ENV_VAR_PATTERN = re.compile(r"\$\{([^}]+)\}")
+
+
+def _env_ref_name(ref: str) -> str:
+    """Normalize a ``${...}`` reference body into an env-var name.
+
+    Accepts Cursor-style ``${env:VAR}`` in addition to plain ``${VAR}`` by
+    stripping a leading ``env:`` prefix. The result is the bare variable name
+    to look up in the secret scope / ``os.environ``.
+    """
+    ref = ref.strip()
+    if ref.startswith("env:"):
+        ref = ref[len("env:"):].strip()
+    return ref
+
+
+def _workspace_folder() -> str:
+    """Best-effort absolute workspace root for ``${workspaceFolder}``.
+
+    Resolution order:
+
+      1. ``tools.file_tools._authoritative_workspace_root()`` — the session's
+         recorded terminal cwd, a registered task/session cwd override, or a
+         sentinel-free absolute ``$TERMINAL_CWD`` (in that order).
+      2. ``os.getcwd()`` as the final fallback when no session anchor exists.
+    """
+    try:
+        from tools.file_tools import _authoritative_workspace_root
+
+        root = _authoritative_workspace_root()
+        if root:
+            return root
+    except Exception:
+        pass
+    return os.getcwd()
+
+
+def _context_var_value(ref: str) -> Optional[str]:
+    """Resolve Cursor-style context variables in ``${...}`` references.
+
+    Supports the case-sensitive names Cursor's ``mcp.json`` interpolation
+    understands beyond env vars: ``${userHome}``, ``${workspaceFolder}``,
+    ``${workspaceFolderBasename}``, ``${pathSeparator}`` and its ``${/}``
+    shorthand. Returns ``None`` for anything else so unknown references keep
+    the existing env-var lookup semantics.
+    """
+    if ref == "userHome":
+        return os.path.expanduser("~")
+    if ref == "workspaceFolder":
+        return _workspace_folder()
+    if ref == "workspaceFolderBasename":
+        root = _workspace_folder()
+        return os.path.basename(root.rstrip("/\\")) or root
+    if ref in ("pathSeparator", "/"):
+        return os.sep
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Security helpers
+# ---------------------------------------------------------------------------
+
+def _sandbox_proxy_active() -> bool:
+    """True when this process is running inside an egress-proxy sandbox.
+
+    Detection must not hang off one vendor's sentinel: Hermes ships a Docker
+    sandbox (``tools/environments/docker.py`` sets ``HERMES_EGRESS_PROXY=1``)
+    but is also run under third-party sandboxes such as ``nono``, which set
+    the standard ``*_PROXY`` plumbing and their own markers and know nothing
+    about Hermes' sentinel.  Gating solely on ``HERMES_EGRESS_PROXY`` silently
+    no-ops everywhere except Docker, so three independent signals are checked:
+
+    1. ``HERMES_EGRESS_PROXY`` — Hermes' own Docker/iron-proxy sandbox.
+    2. ``NONO_PROXY_TOKEN`` / ``NONO_CAP_FILE`` — the ``nono`` sandbox.
+    3. A ``*_PROXY`` URL pointing at loopback — the generic fallback that
+       covers any sandbox which mints a local egress proxy without
+       advertising itself.  A corporate proxy is never on 127.0.0.1, so this
+       does not sweep in ambient host proxy settings.
+
+    Ambient, non-loopback proxy vars set by the user's shell stay filtered,
+    exactly as before.
+    """
+    if os.environ.get("HERMES_EGRESS_PROXY", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        return True
+
+    if os.environ.get("NONO_PROXY_TOKEN") or os.environ.get("NONO_CAP_FILE"):
+        return True
+
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy",
+                "ALL_PROXY", "all_proxy"):
+        raw = (os.environ.get(key) or "").strip()
+        if not raw:
+            continue
+        # A bare "host:port" has no scheme; urlparse would read it as one.
+        candidate = raw if "://" in raw else f"http://{raw}"
+        try:
+            host = urlparse(candidate).hostname
+        except ValueError:  # malformed proxy URL — ignore, don't crash
+            continue
+        if host and host.lower() in _LOOPBACK_PROXY_HOSTS:
+            return True
+
+    return False
+
+
+def _build_safe_env(user_env: Optional[dict]) -> dict:
+    """Build a filtered environment dict for stdio subprocesses.
+
+    Only passes through safe baseline variables (PATH, HOME, etc.) and XDG_*
+    variables from the current process environment, secrets injected by an
+    external secret source (Bitwarden, 1Password, plugin backends) that
+    Hermes explicitly tagged during dotenv loading, plus any variables
+    explicitly specified by the user in the server config.
+
+    When Hermes itself runs inside an egress-proxy sandbox (see
+    :func:`_sandbox_proxy_active`), that sandbox's proxy-control vars
+    (``_SANDBOX_PROXY_ENV_KEYS``) also pass through, because the sandbox
+    proxy is the subprocess's only route to the network.  Credentials are
+    still filtered — the proxy-control set contains no provider secrets.
+
+    This prevents accidentally leaking secrets like API keys, tokens, or
+    credentials to MCP server subprocesses.  Secret-source-injected vars are
+    an exception: users configured that backend specifically so Hermes and
+    its subprocesses can consume those credentials without duplicating them
+    in every MCP server's ``env:`` block.
+    """
+    try:
+        from hermes_cli.env_loader import get_secret_source
+    except Exception:  # pragma: no cover — early bootstrap/import fallback
+        get_secret_source = None
+    include_proxy = _sandbox_proxy_active()
+    env = {}
+    for key, value in os.environ.items():
+        if (
+            key in _SAFE_ENV_KEYS
+            or key.upper() in _SAFE_ENV_KEYS_CASE_INSENSITIVE
+            or key.startswith("XDG_")
+            or (get_secret_source is not None and get_secret_source(key))
+            or (include_proxy and key in _SANDBOX_PROXY_ENV_KEYS)
+        ):
+            env[key] = value
+    if user_env:
+        env.update(user_env)
+    return env
+
+
+def _sanitize_error(text: str) -> str:
+    """Strip credential-like patterns from error text before returning to LLM.
+
+    Replaces tokens, keys, and other secrets with [REDACTED] to prevent
+    accidental credential exposure in tool error responses.
+    """
+    return _CREDENTIAL_PATTERN.sub("[REDACTED]", text)
+
+
+def _exc_str(exc: BaseException) -> str:
+    """Return a non-empty human-readable string for *exc*.
+
+    Some exception classes (e.g. ``anyio.ClosedResourceError``) are raised
+    without a message argument, so ``str(exc)`` is ``""``.  This helper
+    falls back to ``repr(exc)`` so that error messages shown to the user
+    and logged to disk always carry *some* diagnostic information.
+    """
+    text = str(exc).strip()
+    return text if text else repr(exc)
+
+
+# JSON-RPC "method not found" — the error a server returns when it does not
+# implement a requested method (e.g. a tool-capable server that never wired up
+# the optional ``ping`` utility). -32601 is the JSON-RPC 2.0 spec constant;
+# _ensure_mcp_sdk() overrides it from mcp.types when the SDK is loaded (kept
+# lazy so this module never triggers the ~260ms `mcp` import at import time).
 _JSONRPC_METHOD_NOT_FOUND = -32601
 # nextCursor pagination cap so a forever-cursor cannot spin discovery (50 pages = thousands).
 _MCP_LIST_MAX_PAGES = 50

@@ -437,12 +437,13 @@ class CLIStreamMixin:
             self._stream_box_opened = True
             self._stream_box_live = True  # header drawn; cleared at the footer
             try:
-                from hermes_cli.skin_engine import get_active_skin
+                from hermes_cli.skin_engine import get_active_skin, get_active_brand_icon
                 _skin = get_active_skin()
-                label = _skin.get_branding("response_label", "☤ Hermes")
+                label = _skin.get_branding("response_label", f"{get_active_brand_icon()} Hermes")
                 _text_hex = _skin.get_color("banner_text", "#FFF8DC")
             except Exception:
-                label = "☤ Hermes"
+                from hermes_cli.skin_engine import get_active_brand_icon
+                label = f"{get_active_brand_icon()} Hermes"
                 _text_hex = "#FFF8DC"
             try:  # true-color escape so streamed text matches the Rich Panel appearance
                 _r, _g, _b = (int(_text_hex[i:i + 2], 16) for i in (1, 3, 5))
@@ -660,8 +661,9 @@ class CLIStreamMixin:
             return
         announced.add(tool_name)
         from agent.display import bridge_generating_phrase, get_tool_emoji
+        from hermes_icons import ICON_BOLT
         what = bridge_generating_phrase(tool_name) or tool_name
-        _cprint(f"  ┊ {t('cli.stream.tool_preparing', emoji=get_tool_emoji(tool_name, default='⚡'), what=what)}")
+        _cprint(f"  ┊ {t('cli.stream.tool_preparing', emoji=get_tool_emoji(tool_name, default=ICON_BOLT), what=what)}")
 
     def _on_tool_progress(self, event_type: str, function_name: str = None, preview: str = None, function_args: dict = None, **kwargs):
         """Tool lifecycle events (tool.started / tool.completed / reasoning.* / moa.*).
